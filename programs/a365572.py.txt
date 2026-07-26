@@ -1,0 +1,61 @@
+# Frontier-DP variants for Fibonacci/Lucas cubes: total / connected / minimal dominating counts.
+import resource
+from graphs import fib_cube, lucas_cube
+from frontier import cuthill_mckee
+
+def _prep(m,adj,order):
+    pos={v:i for i,v in enumerate(order)}
+    nb=[set(adj[v]) for v in range(m)]
+    closing=[max([pos[v]]+[pos[u] for u in nb[v]]) for v in range(m)]
+    return pos,nb,closing
+
+# ---------------- TOTAL DOMINATING ----------------
+# state per active vertex: code = 2*m + d ; m=1 in-set, d=1 has a neighbor in-set
+def count_total_dominating(m,adj,order,rss_cap_gb=8.0):
+    pos,nb,closing=_prep(m,adj,order)
+    active=[]; states={():1}; peak=0
+    for i,v in enumerate(order):
+        idxof={u:k for k,u in enumerate(active)}
+        bslots=tuple(idxof[u] for u in nb[v] if pos[u]<i)
+        new_active=active+[v]
+        forget=[k for k,u in enumerate(new_active) if closing[u]==i]
+        keep=[k for k in range(len(new_active)) if k not in set(forget)]
+        ns={}; get=ns.get
+        for st,c in states.items():
+            # v IN (m=1): d_v=1 if any back-neighbor in-set; mark back-neighbors d=1
+            l=list(st)
+            dv=0
+            for s in bslots:
+                if l[s]>=2: dv=1            # back-neighbor in-set (code>=2)
+            for s in bslots:
+                l[s]|=1                     # mark d=1 on back-neighbors (v in set)
+            l.append(2|dv)                  # m=1
+            ok=all(l[s]&1 for s in forget)
+            if ok:
+                k=tuple(l[j] for j in keep); ns[k]=get(k,0)+c
+            # v OUT (m=0): d_v=1 if any back-neighbor in-set
+            l2=list(st)
+            dv=1 if any(st[s]>=2 for s in bslots) else 0
+            l2.append(dv)                   # m=0,d=dv
+            ok=all(l2[s]&1 for s in forget)
+            if ok:
+                k=tuple(l2[j] for j in keep); ns[k]=get(k,0)+c
+        active=[new_active[k] for k in keep]; states=ns
+        if len(states)>peak: peak=len(states)
+        rss=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1e9
+        if rss>rss_cap_gb: raise MemoryError("RSS %.2fGB step %d states=%d"%(rss,i,len(states)))
+    return states.get((),0),peak
+
+if __name__=="__main__":
+    def brute_total(m,adj):
+        nb=[set(adj[i]) for i in range(m)];cnt=0
+        for mask in range(1<<m):
+            if all(any((mask>>u)&1 for u in nb[v]) for v in range(m)): cnt+=1
+        return cnt
+    gate={"Fib":[1,3,12,80,2132,473712],"Luc":[0,3,7,45,473,51200]}  # A303047 / A365572
+    for name,fn in [("Fib",fib_cube),("Luc",lucas_cube)]:
+        for n in range(1,7):
+            mm,adj=fn(n); o=cuthill_mckee(mm,adj)
+            d,_=count_total_dominating(mm,adj,o); b=brute_total(mm,adj)
+            g=gate[name][n-1] if n-1<len(gate[name]) else None
+            print(name,n,"totaldp=%d brute=%d %s  gate=%s %s"%(d,b,"OK" if d==b else "X",g,"OK" if d==g else ("-" if g is None else "X")))

@@ -1,0 +1,418 @@
+#!/usr/bin/env python3
+"""A143659 / A270668 — perfect matchings (domino tilings) of the odd
+(2n+1) x (2m+1) grid with the CENTER cell removed (a "holey odd rectangle").
+
+FRESH region for the fleet (M34 did the Aztec-rectangle variant A071104).
+Planar bipartite -> FKT/Kasteleyn is exact.  Two INDEPENDENT lineages here:
+
+  A. FKT / Kasteleyn:  #PM = sqrt(det A), A = skew Kasteleyn-oriented adjacency,
+     det via multi-modular numpy (int64 mod ~31-bit primes) + CRT + integer sqrt.
+     (algebraic lineage; region-agnostic machinery reused from M34)
+
+  B. column-transfer domino DP:  process column by column, state = set of rows
+     in the current column covered by a horizontal domino reaching from the left;
+     within a column the free rows must tile by vertical dominoes (even runs).
+     (combinatorial lineage; wholly different algorithm)
+
+  + brute-force recursive PM count for the small anchors.
+
+Gate: reproduce every published A143659 term (n=0..9) EXACTLY.
+"""
+import sys, time, resource
+from math import atan2, isqrt
+from collections import defaultdict, deque
+
+sys.setrecursionlimit(1_000_000)
+
+
+def _rss_mb():
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+
+
+# ---------------------------------------------------------------------------
+# Region: (2n+1) x (2m+1) grid, delete the single center cell.
+# rows r = 0..R-1 (R=2n+1), cols c = 0..C-1 (C=2m+1); hole at (n, m).
+# ---------------------------------------------------------------------------
+def region_cells(n, m):
+    R, C = 2 * n + 1, 2 * m + 1
+    hole = (n, m)
+    cells = [(r, c) for r in range(R) for c in range(C) if (r, c) != hole]
+    return R, C, hole, cells
+
+
+# ---- lineage B: column-transfer domino DP -------------------------------
+def column_transitions(R, blocked_rows, s_mask):
+    """Given a column of R rows, `blocked_rows` bitmask of blocked (hole) rows,
+    and `s_mask` = rows already covered by a horizontal domino from the left,
+    return dict {t_mask: ways} of outgoing horizontal-to-right sets.  Within the
+    column, free rows not in s and not sending right are tiled by vertical
+    dominoes (each maximal run must be even)."""
+    out = defaultdict(int)
+    # DP over rows: carry = 1 if an open vertical domino from row r-1 needs row r.
+    # frontier states: dict (carry) -> dict {t_partial: ways}
+    frontier = {0: {0: 1}}
+    for r in range(R):
+        bit = 1 << r
+        occ_left = (s_mask >> r) & 1
+        blocked = (blocked_rows >> r) & 1
+        nf = {0: defaultdict(int), 1: defaultdict(int)}
+        for carry, tw in frontier.items():
+            for t, w in tw.items():
+                if occ_left or blocked:
+                    # cell is filled from left / is a hole: cannot receive a
+                    # pending vertical, cannot start one, not in t.
+                    if carry == 1:
+                        continue  # pending vertical has nowhere to close -> dead
+                    nf[0][t] += w
+                else:
+                    # free row: 3 mutually exclusive roles
+                    # (i) send right (in t): requires no pending vertical
+                    if carry == 0:
+                        nf[0][t | bit] += w
+                    # (ii) close a pending vertical (needs carry==1)
+                    if carry == 1:
+                        nf[0][t] += w
+                    # (iii) open a new vertical (needs carry==0)
+                    if carry == 0:
+                        nf[1][t] += w
+        frontier = {c: d for c, d in nf.items() if d}
+    # at the end no vertical may be left open (carry must be 0)
+    for t, w in frontier.get(0, {}).items():
+        out[t] += w
+    return out
+
+
+def a_transfer(n, m=None):
+    if m is None:
+        m = n
+    R, C = 2 * n + 1, 2 * m + 1
+    hole = (n, m)  # (row, col)
+    # blocked rows per column
+    blocked_of_col = [0] * C
+    hr, hc = hole
+    blocked_of_col[hc] = 1 << hr
+    # dp over columns; state s = rows covered-from-left in current column
+    dp = {0: 1}
+    for c in range(C):
+        ndp = defaultdict(int)
+        br = blocked_of_col[c]
+        # cache transitions per s to avoid recompute
+        cache = {}
+        for s, w in dp.items():
+            # a hole cell cannot be covered from the left
+            if s & br:
+                continue
+            key = (br, s)
+            trans = cache.get(key)
+            if trans is None:
+                trans = column_transitions(R, br, s)
+                cache[key] = trans
+            for t, ways in trans.items():
+                ndp[t] += w * ways
+        dp = ndp
+    return dp.get(0, 0)
+
+
+# ---- brute force (anchor) -------------------------------------------------
+def a_brute(n, m=None):
+    if m is None:
+        m = n
+    R, C, hole, cells = region_cells(n, m)
+    cellset = set(cells)
+    order = sorted(cellset)
+    idx = {cell: i for i, cell in enumerate(order)}
+
+    def rec(used):
+        # find first unused cell
+        first = -1
+        for i in range(len(order)):
+            if not (used >> i) & 1:
+                first = i
+                break
+        if first == -1:
+            return 1
+        r, c = order[first]
+        total = 0
+        for dr, dc in ((0, 1), (1, 0)):
+            nb = (r + dr, c + dc)
+            if nb in cellset:
+                j = idx[nb]
+                if not (used >> j) & 1:
+                    total += rec(used | (1 << first) | (1 << j))
+        return total
+
+    return rec(0)
+
+
+# ---- lineage A: FKT / Kasteleyn on the geometric planar embedding ---------
+def build_graph(n, m=None):
+    if m is None:
+        m = n
+    R, C, hole, cells = region_cells(n, m)
+    Vs = set(cells)
+    V = cells
+    adj = {v: set() for v in V}
+    for (r, c) in V:
+        for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0)):
+            w = (r + dr, c + dc)
+            if w in Vs:
+                adj[(r, c)].add(w)
+    return V, adj
+
+
+def trace_faces(V, adj):
+    rot, posin = {}, {}
+    for v in V:
+        vx, vy = v
+        nb = sorted(adj[v], key=lambda w: atan2(w[1] - vy, w[0] - vx))
+        rot[v] = nb
+        posin[v] = {w: i for i, w in enumerate(nb)}
+
+    def next_dart(u, v):
+        i = posin[v][u]
+        r = rot[v]
+        return (v, r[(i - 1) % len(r)])
+
+    visited = set()
+    faces = []
+    for u in V:
+        for v in adj[u]:
+            if (u, v) in visited:
+                continue
+            face, a, b = [], u, v
+            while (a, b) not in visited:
+                visited.add((a, b))
+                face.append(a)
+                a, b = next_dart(a, b)
+            faces.append(face)
+    return faces
+
+
+def signed_area(face):
+    s, L = 0, len(face)
+    for i in range(L):
+        x1, y1 = face[i]
+        x2, y2 = face[(i + 1) % L]
+        s += x1 * y2 - x2 * y1
+    return s / 2.0
+
+
+def kasteleyn_orientation(V, adj, perturb_start=0):
+    faces = trace_faces(V, adj)
+    E = sum(len(adj[v]) for v in V) // 2
+    F = len(faces)
+    assert len(V) - E + F == 2, f"Euler fail V={len(V)} E={E} F={F}"
+    areas = [signed_area(f) for f in faces]
+    outer = max(range(F), key=lambda i: abs(areas[i]))
+    bounded = [i for i in range(F) if i != outer]
+    idx = {v: i for i, v in enumerate(V)}
+
+    def ek(u, w):
+        a, b = idx[u], idx[w]
+        return (a, b) if a < b else (b, a)
+
+    orient = {}
+    all_edges = set()
+    for v in V:
+        for w in adj[v]:
+            all_edges.add(ek(v, w))
+    # spanning tree BFS (start vertex offset -> a different orientation)
+    start = V[perturb_start % len(V)]
+    seen = {start}
+    dq = deque([start])
+    while dq:
+        u = dq.popleft()
+        for w in adj[u]:
+            if w not in seen:
+                seen.add(w)
+                orient[ek(u, w)] = (idx[u], idx[w])
+                dq.append(w)
+    assert len(seen) == len(V), "graph not connected"
+
+    face_edges, face_cw = [], []
+    for fi in bounded:
+        f = faces[fi]
+        L = len(f)
+        face_edges.append([(f[i], f[(i + 1) % L]) for i in range(L)])
+        face_cw.append(areas[fi] < 0)
+
+    remaining = list(range(len(bounded)))
+    progress = True
+    while progress and remaining:
+        progress = False
+        still = []
+        for fj in remaining:
+            edges, cw = face_edges[fj], face_cw[fj]
+            missing, miss_count, coor = None, 0, 0
+            for (p, q) in edges:
+                o = orient.get(ek(p, q))
+                if o is None:
+                    miss_count += 1
+                    missing = (p, q, ek(p, q))
+                elif o == (idx[p], idx[q]):
+                    coor += 1
+            if miss_count == 0:
+                clockwise = coor if cw else (len(edges) - coor)
+                if clockwise % 2 == 0:
+                    raise RuntimeError("closed face even clockwise count")
+                continue
+            if miss_count == 1:
+                p, q, key = missing
+                L = len(edges)
+                cw_if = (coor + 1) if cw else (L - (coor + 1))
+                orient[key] = (idx[p], idx[q]) if cw_if % 2 == 1 else (idx[q], idx[p])
+                progress = True
+            else:
+                still.append(fj)
+        remaining = still
+    if remaining:
+        raise RuntimeError(f"orientation stuck: {len(remaining)} faces")
+    assert len(orient) == len(all_edges)
+    return orient
+
+
+def _primes_below(bits, count):
+    import sympy
+    ps, p = [], (1 << bits) - 1
+    while len(ps) < count:
+        if sympy.isprime(p):
+            ps.append(p)
+        p -= 1
+    return ps
+
+
+def det_mod(entries, N, p):
+    import numpy as np
+    M = np.zeros((N, N), dtype=np.int64)
+    for (i, j, v) in entries:
+        M[i, j] = v % p
+    det = 1
+    for col in range(N):
+        piv = -1
+        for r in range(col, N):
+            if M[r, col] % p != 0:
+                piv = r
+                break
+        if piv == -1:
+            return 0
+        if piv != col:
+            M[[col, piv]] = M[[piv, col]]
+            det = (-det) % p
+        inv = pow(int(M[col, col]), p - 2, p)
+        det = (det * int(M[col, col])) % p
+        for r in range(col + 1, N):
+            f = (int(M[r, col]) * inv) % p
+            if f:
+                M[r] = (M[r] - f * M[col]) % p
+    return det % p
+
+
+def crt(rem, mods):
+    from functools import reduce
+    Mall = reduce(lambda a, b: a * b, mods)
+    x = 0
+    for r, mm in zip(rem, mods):
+        Mi = Mall // mm
+        x = (x + r * Mi * pow(Mi, -1, mm)) % Mall
+    return x, Mall
+
+
+def _components(V, adj):
+    seen, comps = set(), []
+    for s in V:
+        if s in seen:
+            continue
+        comp, dq = [], deque([s])
+        seen.add(s)
+        while dq:
+            u = dq.popleft()
+            comp.append(u)
+            for w in adj[u]:
+                if w not in seen:
+                    seen.add(w)
+                    dq.append(w)
+        comps.append(comp)
+    return comps
+
+
+def a_fkt(n, m=None, perturb=0):
+    import math
+    V, adj = build_graph(n, m)
+    N = len(V)
+    if N == 0:
+        return 1, 1, True  # empty region: one (empty) matching
+    if N % 2 == 1:
+        return 0, 0, True  # odd vertices -> no PM
+    # factor over connected components (FKT per component; product of PM counts)
+    comps = _components(V, adj)
+    if len(comps) > 1:
+        total, det_prod, allsq = 1, 1, True
+        for comp in comps:
+            cset = set(comp)
+            subadj = {v: {w for w in adj[v] if w in cset} for v in comp}
+            if len(comp) % 2 == 1:
+                return 0, 0, True
+            s, d, sq = _a_fkt_connected(comp, subadj, perturb)
+            total *= s
+            det_prod *= d
+            allsq = allsq and sq
+            if total == 0:
+                break
+        return total, det_prod, allsq
+    return _a_fkt_connected(V, adj, perturb)
+
+
+def _a_fkt_connected(V, adj, perturb=0):
+    import math
+    N = len(V)
+    if N == 0:
+        return 1, 1, True
+    orient = kasteleyn_orientation(V, adj, perturb_start=perturb)
+    entries = []
+    deg = [0] * N
+    for (a, b), (t, h) in orient.items():
+        entries.append((t, h, 1))
+        entries.append((h, t, -1))
+        deg[t] += 1
+        deg[h] += 1
+    logbound = 0.5 * sum(math.log2(d) for d in deg if d > 0) + 4
+    nbits = 31
+    nprimes = int(logbound / (nbits - 1)) + 4
+    primes = _primes_below(nbits, nprimes)
+    rem = [det_mod(entries, N, p) for p in primes]
+    x, Mmod = crt(rem, primes)
+    if x > Mmod // 2:
+        x -= Mmod
+    det = abs(x)
+    s = isqrt(det)
+    return s, det, (s * s == det)
+
+
+KNOWN = {0: 1, 1: 2, 2: 196, 3: 75272, 4: 599466256, 5: 28838245503008,
+         6: 22463213552677201984, 7: 123818965842734619629420672,
+         8: 9830731407624872890044690474098944,
+         9: 6011432546485776316904414215762657381908992}
+
+if __name__ == "__main__":
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    method = "fkt"
+    for a in sys.argv[1:]:
+        if a.startswith("--"):
+            method = a[2:]
+    lo = int(args[0]) if args else 0
+    hi = int(args[1]) if len(args) > 1 else 9
+    for n in range(lo, hi + 1):
+        t0 = time.time()
+        if method == "transfer":
+            val = a_transfer(n)
+            det = sq = None
+        elif method == "brute":
+            val = a_brute(n)
+            det = sq = None
+        else:
+            val, det, sq = a_fkt(n)
+        dt = time.time() - t0
+        chk = KNOWN.get(n)
+        tag = ("OK" if chk == val else f"MISMATCH exp={chk}") if chk is not None else "NEW"
+        extra = f" perfsq={sq}" if sq is not None else ""
+        print(f"[{method}] a({n}) = {val}   [{tag}]{extra}  {dt:.2f}s  peakRSS={_rss_mb():.0f}MB", flush=True)

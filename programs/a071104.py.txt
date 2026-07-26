@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""A071104 - perfect matchings of the variant 2n-1 x 2n Aztec-rectangle graph.
+
+Region (Howroyd, OEIS comment 2016), k=2n+1:
+  vertices (x,y): |x|<=k, |y|<=k, |x+y|<=k, |x-y|<=k+1, excluding (0,0).
+Adjacency (x1,y1)~(x2,y2):
+  (a) |dx|=1, dy=0                       horizontal
+  (b) dx=0, |dy|=1                       vertical
+  (c) |dx|=|dy|=1 and x1+y1 odd          diagonal (coord-sum-odd vertices only)
+
+METHOD: exact perfect-matching COLUMN TRANSFER over big-ints.
+Columns = fixed x, ordered x=-k..k. Bounded bandwidth 1 (every edge stays
+within a column or between adjacent columns). DP state = bitmask over the
+CURRENT column's vertices marking those already matched by a forward edge
+from the previous column. Each column vertex must be matched EXACTLY once:
+either premarked, or a vertical edge inside the column, or a forward edge to
+the next column (which sets the next column's premarked mask).
+"""
+import sys, time, resource
+
+
+def _rss_mb():
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+
+
+def columns(n):
+    """Return list of columns; each column = sorted list of y-values present at that x."""
+    k = 2 * n + 1
+    cols = {}
+    for x in range(-k, k + 1):
+        ys = []
+        for y in range(-k, k + 1):
+            if x == 0 and y == 0:
+                continue
+            if abs(x + y) <= k and abs(x - y) <= k + 1:
+                ys.append(y)
+        if ys:
+            cols[x] = sorted(ys)
+    xs = sorted(cols)
+    return xs, cols
+
+
+def forward_targets(x, y, next_ys_index):
+    """Indices in the next column reachable by a forward edge from (x,y)."""
+    t = []
+    j = next_ys_index.get(y)          # horizontal
+    if j is not None:
+        t.append(j)
+    if (x + y) % 2 != 0:              # diagonal only when coord-sum odd
+        for dy in (-1, 1):
+            j = next_ys_index.get(y + dy)
+            if j is not None:
+                t.append(j)
+    return t
+
+
+def a_transfer(n, verbose=False):
+    if n == 0:
+        return 1
+    xs, cols = columns(n)
+    # total vertices sanity
+    assert sum(len(cols[x]) for x in xs) == 8 * n * n + 16 * n + 6
+
+    dist = {0: 1}   # premarked-mask over first column -> count ; first col premarked = none
+    for ci, x in enumerate(xs):
+        ys = cols[x]
+        h = len(ys)
+        last = (ci == len(xs) - 1)
+        if last:
+            nxt_ys = []
+            nxt_index = {}
+        else:
+            nxt_ys = cols[xs[ci + 1]]
+            nxt_index = {yy: j for j, yy in enumerate(nxt_ys)}
+        # precompute per-vertex forward target index-lists and vertical adjacency
+        ftar = [forward_targets(x, ys[i], nxt_index) for i in range(h)]
+        vadj_down = [(i + 1 < h and ys[i + 1] == ys[i] + 1) for i in range(h)]  # vertical edge i--(i+1)
+
+        # enumerate, for a given premarked mask, all outgoing masks with multiplicity
+        def transitions(mask):
+            out = {}
+            # recursion over column vertices; carry ve_above (covered from above) and out_used mask
+            def rec(i, ve_above, out_used):
+                if i == h:
+                    out[out_used] = out.get(out_used, 0) + 1
+                    return
+                covered = ve_above or ((mask >> i) & 1)
+                if covered:
+                    rec(i + 1, False, out_used)
+                    return
+                # must cover vertex i exactly once
+                # option A: vertical edge down to i+1 (i+1 must exist, be adjacent, not premarked)
+                if vadj_down[i] and not ((mask >> (i + 1)) & 1):
+                    rec(i + 1, True, out_used)
+                # option B: forward edge to an available next-column target
+                for t in ftar[i]:
+                    bit = 1 << t
+                    if not (out_used & bit):
+                        rec(i + 1, False, out_used | bit)
+            rec(0, False, 0)
+            return out
+
+        nd = {}
+        ndget = nd.get
+        tcache = {}
+        for st, cnt in dist.items():
+            tr = tcache.get(st)
+            if tr is None:
+                tr = transitions(st)
+                tcache[st] = tr
+            for o, m in tr.items():
+                nd[o] = ndget(o, 0) + cnt * m
+        dist = nd
+        if verbose:
+            print(f"   n={n} col {ci+1}/{len(xs)} x={x} h={h} states={len(dist)} peakRSS={_rss_mb():.0f}MB", flush=True)
+    # after last column, only the empty outgoing mask is valid
+    return dist.get(0, 0)
+
+
+KNOWN = {1: 448, 2: 1018368, 3: 32505856000,
+         4: 21457409146880000, 5: 217683729041040447897600}
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    verbose = "-v" in args
+    args = [a for a in args if a != "-v"]
+    lo = int(args[0]) if args else 1
+    hi = int(args[1]) if len(args) > 1 else 5
+    for n in range(lo, hi + 1):
+        t0 = time.time()
+        v = a_transfer(n, verbose=verbose)
+        dt = time.time() - t0
+        chk = KNOWN.get(n)
+        tag = ("OK" if chk == v else f"MISMATCH exp={chk}") if chk is not None else "NEW"
+        print(f"a({n}) = {v}   [{tag}]  {dt:.2f}s  peakRSS={_rss_mb():.0f}MB", flush=True)

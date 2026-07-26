@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""
+A374718: number of MAXIMAL MATCHINGS in the n-Sierpinski gasket graph SG_n.
+
+SG_1 = triangle K_3. SG_n = 3 copies of SG_{n-1} glued pairwise at their 3
+corner vertices (top / bottom-left / bottom-right). |E(SG_n)| = 3^n,
+|V(SG_n)| = (3^n + 3)/2. Each corner vertex has degree 2 in the full graph.
+
+A MATCHING = set of pairwise vertex-disjoint edges. A matching is MAXIMAL iff no
+edge can be added, i.e. every edge has >= 1 matched endpoint, i.e. the set of
+UNMATCHED (exposed) vertices is an INDEPENDENT set.
+
+RENORMALIZATION (Lineage 1, same 3-corner scheme as M32/A378860):
+Track the exact count of partial configurations as a function of the 3 corner
+vertices' BOUNDARY STATE s in {M, S, F}:
+    M = corner is MATCHED by an edge inside this copy.
+    S = corner is unmatched inside this copy AND all its within-copy neighbours
+        are matched (exposed-but-locally-saturated: may stay exposed).
+    F = corner is unmatched inside this copy AND has an unmatched within-copy
+        neighbour (must-still-match: forced to be matched by the partner copy,
+        else edge (corner, that neighbour) is addable -> not maximal).
+All interior (non-corner) vertices' maximality and all interior-interior edges
+are enforced immediately inside the copy; only each corner's own match-status
+and its incident "addable-unless-corner-matched" obligations are deferred.
+
+Base f_2 built by brute force over the 2^9 subsets of the explicit SG_2 graph
+(6 vertices, 9 edges; corners A,B,C degree 2, midpoints X,Y,Z interior). SG_2 is
+used (not SG_1) because there corners are adjacent only to interior vertices, so
+each corner's M/S/F state is independent of the other corners' deferred status.
+
+Gluing SG_n from copies P(top),Q(left),R(right) (glued vertices become interior):
+    g1 = P.l & Q.t ;  g2 = P.r & R.t ;  g3 = Q.r & R.l
+    exposed corners of SG_n = (P.t, Q.l, R.r).
+Merge of two corner states (glued vertex g becomes interior -> maximality fully
+resolved now):
+    g final-matched iff exactly one side is M (both M = double-matched = invalid).
+    merge_ok(sa,sb): False if both M; True if exactly one M; if neither M then
+    valid iff both S (any F leaves an addable edge at the unmatched g).
+Close an exposed top-level corner: valid iff state in {M, S} (F is not closable).
+"""
+import sys, time, resource
+
+M, S, F = 0, 1, 2          # corner states
+
+# ---------- base f_2 by explicit brute force ----------
+
+def build_f2():
+    A, B, C, X, Y, Z = range(6)
+    corners = (A, B, C)                      # top, bottom-left, bottom-right
+    edges = [
+        (A, X), (A, Y), (X, Y),      # top triangle
+        (X, B), (X, Z), (B, Z),      # bottom-left triangle
+        (Y, Z), (Y, C), (Z, C),      # bottom-right triangle
+    ]
+    interior = (X, Y, Z)
+    adj = {v: [] for v in range(6)}
+    for u, v in edges:
+        adj[u].append(v); adj[v].append(u)
+    m = len(edges)
+    f2 = {}
+    for mask in range(1 << m):
+        deg = [0] * 6
+        ok = True
+        for i in range(m):
+            if mask >> i & 1:
+                u, v = edges[i]
+                deg[u] += 1; deg[v] += 1
+                if deg[u] > 1 or deg[v] > 1:   # not a matching
+                    ok = False; break
+        if not ok:
+            continue
+        # interior vertices: maximality (unmatched interior must have all interior
+        # neighbours matched; corner neighbours are deferred to corner state)
+        good = True
+        for w in interior:
+            if deg[w] == 0:
+                for u in adj[w]:
+                    if u in interior and deg[u] == 0:
+                        good = False; break
+            if not good:
+                break
+        if not good:
+            continue
+        # corner states
+        st = []
+        for c in corners:
+            if deg[c] == 1:
+                st.append(M)
+            else:  # deg[c]==0, unmatched in copy
+                forced = any(deg[u] == 0 for u in adj[c])
+                st.append(F if forced else S)
+        key = (st[0], st[1], st[2])
+        f2[key] = f2.get(key, 0) + 1
+    return f2
+
+# ---------- merge / close rules ----------
+
+def merge_ok(sa, sb):
+    if sa == M and sb == M:
+        return False                 # glued vertex double-matched
+    if sa == M or sb == M:
+        return True                  # exactly one match -> glued vertex matched
+    return sa == S and sb == S       # neither matched: any F -> addable edge
+
+def closable(s):
+    return s != F                    # M or S
+
+# ---------- recursion f_n from f_{n-1} ----------
+
+def step(fprev):
+    states = list(fprev.keys())
+    fn = {}
+    for (Pt, Pl, Pr) in states:
+        cP = fprev[(Pt, Pl, Pr)]
+        for (Qt, Ql, Qr) in states:
+            if not merge_ok(Pl, Qt):          # g1 = P.l & Q.t
+                continue
+            cPQ = cP * fprev[(Qt, Ql, Qr)]
+            for (Rt, Rl, Rr) in states:
+                if not merge_ok(Pr, Rt):      # g2 = P.r & R.t
+                    continue
+                if not merge_ok(Qr, Rl):      # g3 = Q.r & R.l
+                    continue
+                key = (Pt, Ql, Rr)
+                fn[key] = fn.get(key, 0) + cPQ * fprev[(Rt, Rl, Rr)]
+    return fn
+
+def close(f):
+    tot = 0
+    for (s1, s2, s3), cnt in f.items():
+        if closable(s1) and closable(s2) and closable(s3):
+            tot += cnt
+    return tot
+
+# ---------- explicit-graph brute (ground-truth anchor, small n) ----------
+
+def sg_graph(n):
+    if n == 1:
+        return [(0, 1), (1, 2), (0, 2)], (0, 1, 2)
+    esub, (t, l, r) = sg_graph(n - 1)
+    edges = []
+    for copy in range(3):
+        for (a, b) in esub:
+            edges.append(((copy, a), (copy, b)))
+    parent = {}
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb: parent[ra] = rb
+    P, Q, R = 0, 1, 2
+    union((P, l), (Q, t))   # g1
+    union((P, r), (R, t))   # g2
+    union((Q, r), (R, l))   # g3
+    edges2 = [(find(a), find(b)) for (a, b) in edges]
+    corners = (find((P, t)), find((Q, l)), find((R, r)))
+    verts = set()
+    for a, b in edges2: verts.add(a); verts.add(b)
+    idx = {v: i for i, v in enumerate(sorted(verts, key=str))}
+    edges3 = [(idx[a], idx[b]) for (a, b) in edges2]
+    corners3 = tuple(idx[c] for c in corners)
+    return edges3, corners3
+
+def brute(n):
+    """Count maximal matchings of explicit SG_n by DFS over matchings."""
+    edges, _ = sg_graph(n)
+    verts = set()
+    for a, b in edges: verts.add(a); verts.add(b)
+    V = len(verts); m = len(edges)
+    matched = [False] * V
+    count = 0
+    def dfs(i):
+        nonlocal count
+        if i == m:
+            for u, w in edges:
+                if not matched[u] and not matched[w]:
+                    return                       # addable edge -> not maximal
+            count += 1
+            return
+        dfs(i + 1)                               # exclude edge i
+        u, w = edges[i]
+        if not matched[u] and not matched[w]:
+            matched[u] = matched[w] = True
+            dfs(i + 1)                           # include
+            matched[u] = matched[w] = False
+    dfs(0)
+    return count
+
+KNOWN = {
+    1: 3,
+    2: 11,
+    3: 897,
+    4: 498314475,
+    5: 88104572238415354326478481,
+    6: 486888637778214600435993751462019376578868514857213338040908365692905551286883,
+    7: 82171878608778894551298316339366401316214328488411859575749732468078034289506047081400282666379217198590832574988198214583406087697854729286872730365712597886135000672103453063050353336178185924509924586946222329709195320924771383249,
+    8: 395006228981199727087759917918367117080865279774462457554774145229388889185587230832904875477192500829245627925823245270168971523486220299868936683532130223117478612505218506646575519234137223110985615007942129228114936451971572016329236201942385851156682430055273411591961983319315801561533713011363956604067896395137523744390247611874074366634125519617373975612277359676826019175406349646981877656565538636526064911474190699856972381004180014662066095273594182827820732460719937280887274397350254510204396485507600771786070580168515677944011124292260258910014052259846565509758143174409377627862389083453302916694300757123577939874636282571779527139265945366080405546803360563883338811982994008251,
+}
+
+def run(hi):
+    res = {}
+    res[1] = brute(1)                # triangle base value
+    f = build_f2()
+    res[2] = close(f)
+    for n in range(3, hi + 1):
+        f = step(f)
+        res[n] = close(f)
+    return res
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args and args[0] == "brute":
+        hi = int(args[1]) if len(args) > 1 else 3
+        for n in range(1, hi + 1):
+            t0 = time.time(); v = brute(n)
+            k = KNOWN.get(n)
+            tag = "OK" if k == v else (f"MISMATCH exp={k}" if k is not None else "NEW")
+            print(f"brute a({n})={v}  [{tag}]  {time.time()-t0:.2f}s", flush=True)
+        sys.exit(0)
+    hi = int(args[0]) if args else 8
+    t0 = time.time()
+    res = run(hi)
+    for n in sorted(res):
+        chk = KNOWN.get(n)
+        tag = "OK" if chk == res[n] else (f"MISMATCH exp={chk}" if chk is not None else "NEW")
+        print(f"a({n}) = {res[n]}   [{tag}]", flush=True)
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+    print(f"total {time.time()-t0:.3f}s  peakRSS={rss:.0f}MB", flush=True)

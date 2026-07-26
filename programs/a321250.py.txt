@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+"""
+A321250: number of MAXIMAL independent sets in the n x n TORUS grid graph C_n [] C_n.
+
+A maximal independent set = independent set that is also dominating
+(equivalently an independent dominating set: no vertex can be added).
+
+METHOD (exact, deterministic column transfer over big-ints):
+  Vertices (r,c), r,c in Z_n. Edges (r,c)~(r+/-1,c) and (r,c)~(r,c+/-1) (both wrap).
+  Process column by column. A column occupancy is a bitmask over n rows (bit r set = O
+  = in the set). Independence within a column: no two cyclically adjacent bits both set.
+  Between adjacent columns: (p & q) == 0 (horizontal independence).
+
+  Full transfer STATE of a column = (p, q):
+      p = occupancy bitmask (which rows are O)
+      q = "pending" bitmask: empty rows NOT yet dominated by their left neighbor or by a
+          within-column vertical neighbor -> they MUST be dominated by the next column
+          (their right neighbor), forcing that column to be O there.
+  A pending row therefore has both vertical neighbors empty and left neighbor empty.
+
+  Forward transition produce((p,q), B):  [B = next column occupancy]
+      require B independent, (p & B)==0, and q subset B  (pending resolved by right O).
+      new pending q'[i] = (B[i]==0) and (p[i]==0)[left empty] and (B[i-1]==0 and B[i+1]==0)[within empty]
+
+  TORUS horizontal wrap handled by anchoring column 0:
+    for each occupancy p0 of column 0:
+      for each occupancy p1 (compatible, p0&p1==0):
+        - col0 residual R = col0 empty rows dominated NEITHER within col0 NOR by col1 ->
+          they MUST be dominated by col_{n-1} (col0's left neighbor). (R carried inert.)
+        - S1 = (p1, q1) with q1 computed using left=col0, within=col1.
+      propagate S1 through columns 2..n-1  (n-2 forward transitions).
+      CLOSE at col_{n-1}=(p_last,q_last):
+        require (p_last & p0)==0                 (horiz. indep. col_{n-1} vs col0)
+        require q_last subset p0                  (col_{n-1} pending dominated by col0)
+        require R subset p_last                   (col0 residual dominated by col_{n-1})
+      Every empty cell then has >=1 neighbor in the set (all 4 directions covered), and the
+      set is independent -> counted exactly once per valid torus configuration.
+
+  Valid for n>=3 (C_n a simple cycle). n=1,2 handled as known/degenerate.
+"""
+import sys, time, resource
+
+def independent_occupancies(n):
+    """All bitmasks over n cyclic rows with no two adjacent bits set."""
+    res = []
+    for m in range(1 << n):
+        ok = True
+        for i in range(n):
+            if (m >> i) & 1 and (m >> ((i + 1) % n)) & 1:
+                ok = False; break
+        if ok:
+            res.append(m)
+    return res
+
+def build_transition(n, occs):
+    """global transition table: (p,q) -> list of (p2,q2). built lazily via a closure."""
+    full = (1 << n) - 1
+    # precompute, for each occupancy B, its "within-column empty & isolated" info is per-B;
+    # q' depends on B and left p, so compute on the fly.
+    def q_prime(p, B):
+        q2 = 0
+        for i in range(n):
+            if (B >> i) & 1:            # occupied -> not pending
+                continue
+            if (p >> i) & 1:            # dominated by left
+                continue
+            if (B >> ((i - 1) % n)) & 1 or (B >> ((i + 1) % n)) & 1:  # within-col vertical
+                continue
+            q2 |= (1 << i)
+        return q2
+    cache = {}
+    def trans(state):
+        r = cache.get(state)
+        if r is not None:
+            return r
+        p, q = state
+        out = []
+        for B in occs:
+            if (p & B):          # horizontal independence
+                continue
+            if (q & ~B):         # pending must be resolved by right O: q subset B
+                continue
+            out.append((B, q_prime(p, B)))
+        cache[state] = out
+        return out
+    return trans, q_prime
+
+def a_torus(n):
+    if n == 1:
+        return 1
+    if n == 2:
+        return 2
+    occs = independent_occupancies(n)
+    trans, q_prime = build_transition(n, occs)
+
+    # precompute col0-residual R and S1 for each (p0,p1) pair up front is heavy; do inline.
+    total = 0
+    for p0 in occs:
+        # group compatible p1 by residual R, initial vector = sum of delta_{S1}
+        groups = {}  # R -> dict state->count
+        for p1 in occs:
+            if (p0 & p1):
+                continue
+            # col0 residual R
+            R = 0
+            q1 = 0
+            for i in range(n):
+                b0 = (p0 >> i) & 1
+                b1 = (p1 >> i) & 1
+                if not b0:  # col0 empty at row i -> maybe residual
+                    up0 = (p0 >> ((i - 1) % n)) & 1
+                    dn0 = (p0 >> ((i + 1) % n)) & 1
+                    if not (up0 or dn0) and not b1:
+                        R |= (1 << i)   # not dominated within col0 nor by col1 -> needs col_{n-1}
+                if not b1:  # col1 empty at row i -> compute pending q1
+                    if not b0:  # left (col0) not O
+                        up1 = (p1 >> ((i - 1) % n)) & 1
+                        dn1 = (p1 >> ((i + 1) % n)) & 1
+                        if not (up1 or dn1):
+                            q1 |= (1 << i)
+            S1 = (p1, q1)
+            g = groups.setdefault(R, {})
+            g[S1] = g.get(S1, 0) + 1
+
+        for R, dist in groups.items():
+            # propagate n-2 steps (col1 -> col2 -> ... -> col_{n-1})
+            for _ in range(n - 2):
+                nd = {}
+                for state, c in dist.items():
+                    for nxt in trans(state):
+                        nd[nxt] = nd.get(nxt, 0) + c
+                dist = nd
+            # closure at col_{n-1}
+            for (p_last, q_last), c in dist.items():
+                if (p_last & p0):
+                    continue
+                if (q_last & ~p0):      # col_{n-1} pending resolved by col0
+                    continue
+                if (R & ~p_last):        # col0 residual resolved by col_{n-1}
+                    continue
+                total += c
+    return total
+
+# ---- brute force for tiny n (independent verification) ----
+def a_brute(n):
+    N = n * n
+    def idx(r, c):
+        return (r % n) * n + (c % n)
+    total = 0
+    for mask in range(1 << N):
+        # independence + record occupied
+        occ = [[(mask >> idx(r, c)) & 1 for c in range(n)] for r in range(n)]
+        ok = True
+        for r in range(n):
+            for c in range(n):
+                if occ[r][c]:
+                    if occ[(r+1) % n][c] or occ[r][(c+1) % n]:
+                        ok = False; break
+            if not ok: break
+        if not ok:
+            continue
+        # dominating (maximal): every empty has an occupied neighbor
+        for r in range(n):
+            for c in range(n):
+                if not occ[r][c]:
+                    if not (occ[(r+1) % n][c] or occ[(r-1) % n][c] or occ[r][(c+1) % n] or occ[r][(c-1) % n]):
+                        ok = False; break
+            if not ok: break
+        if ok:
+            total += 1
+    return total
+
+KNOWN = {1:1,2:2,3:6,4:42,5:220,6:3644,7:62272,8:1794762,9:83280570,10:6210321492,11:682849731586}
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args and args[0] == "brute":
+        for n in range(1, int(args[1]) + 1 if len(args) > 1 else 5):
+            print("brute", n, a_brute(n))
+        sys.exit(0)
+    lo = int(args[0]) if args else 1
+    hi = int(args[1]) if len(args) > 1 else 11
+    for n in range(lo, hi + 1):
+        t0 = time.time()
+        v = a_torus(n)
+        dt = time.time() - t0
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024*1024)  # MB on macOS (bytes)
+        chk = KNOWN.get(n)
+        tag = ("OK" if chk == v else ("MISMATCH exp=%d" % chk)) if chk is not None else "NEW"
+        print(f"a({n}) = {v}   [{tag}]  {dt:.2f}s  peakRSS={rss:.0f}MB", flush=True)

@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""
+A297485: number of MAXIMAL matchings in the n-triangular grid graph T_n.
+
+Triangular grid graph T_n (MathWorld): vertices (i,j) with i=0..n, j=0..i
+(a triangle of (n+1)(n+2)/2 vertices, rows of width i+1). Edges:
+    (i,j)-(i,j+1)      horizontal within a row
+    (i,j)-(i+1,j)      down-left  (DL)
+    (i,j)-(i+1,j+1)    down-right (DR)
+So each next-row vertex (i+1,t) has exactly two parents in row i: (i,t-1) via DR
+and (i,t) via DL. (Verified: brute maximal-matching count reproduces a(0..4)=
+1,3,11,86,1318.)
+
+A matching = pairwise vertex-disjoint edge set. MAXIMAL <=> the UNMATCHED vertices
+form an INDEPENDENT set (no edge has both endpoints unmatched).
+
+METHOD (exact, deterministic ROW transfer over big-ints; M25/M27 analog):
+  Process rows TOP -> BOTTOM. The coupling edges between finished rows and the rest
+  are the DOWN edges. Per next-row vertex the boundary state is one of 3 codes
+  (packed 2 bits/position):
+     0 = clear   : free (may end matched or unmatched when its row is processed)
+     1 = locked  : a down edge already matches it -> no further edge allowed
+     2 = must    : a parent in the row above is UNMATCHED -> for maximality this
+                   vertex MUST be matched (by a horizontal edge in its row or a
+                   down edge to the next row); still unmatched so far.
+  Row width grows by 1 per row. Row 0 incoming state = [clear] (top vertex, no
+  parents). Row n is the LAST row (no row below): no down edges; unmatched allowed.
+
+  Row transition (inner recursion over positions k=0..W-1 of the current row):
+    edges decided at k: h_right (k,k+1) [k<W-1], DL[k]->next pos k, DR[k]->next
+    pos k+1.  Carry (h_left=prev_h, prev_un) enforces the horizontal path-matching
+    and horizontal maximality.  A sliding 1-wide window (pend_R,pend_F) carries the
+    DR reservation / unmatched-force from k-1 onto next-position k, which is
+    finalized when vertex k is processed (its parents k-1,k are then both known).
+       a[k]==1 -> locked: no incident edge.  a[k]==2 -> must be matched.
+       a[k]==0 -> free (matched or unmatched; unmatched needs prev not unmatched).
+    next-pos t: R = DR[t-1]+DL[t] (<=1); locked if R==1 else must if a parent
+    unmatched else clear.
+"""
+import sys, time, resource
+
+def row_transition(W, a_packed, last):
+    """Current row width W, incoming packed states a[0..W-1].
+    If not last -> dict{packed_out(width W+1) -> mult}. If last -> {0: total_count}."""
+    a = [(a_packed >> (2 * k)) & 3 for k in range(W)]
+    out = {}
+    ob = [0] * (W + 1)   # outgoing digits for next-row positions 0..W
+
+    def rec(k, prev_h, prev_un, pend_R, pend_F):
+        if k == W:
+            if last:
+                out[0] = out.get(0, 0) + 1
+                return
+            # finalize last next-position W (parent W-1 only, via DR)
+            RW = pend_R
+            if RW > 1:
+                return
+            ob[W] = 1 if RW == 1 else (2 if pend_F else 0)
+            key = 0
+            for t in range(W, -1, -1):
+                key = (key << 2) | ob[t]
+            out[key] = out.get(key, 0) + 1
+            return
+        ar = a[k]
+        h_right_opts = (0, 1) if k < W - 1 else (0,)
+        dl_opts = (0,) if last else (0, 1)
+        dr_opts = (0,) if last else (0, 1)
+        for h_right in h_right_opts:
+            for DL in dl_opts:
+                for DR in dr_opts:
+                    if ar == 1:
+                        if prev_h or h_right or DL or DR:
+                            continue
+                        matched = True
+                    else:
+                        deg = prev_h + h_right + DL + DR
+                        if deg > 1:
+                            continue
+                        matched = deg == 1
+                        if ar == 2 and not matched:
+                            continue
+                    unmatched = not matched
+                    if unmatched and (ar != 0 or prev_un):
+                        continue
+                    if not last:
+                        Rk = pend_R + DL          # DR from k-1 + DL from k
+                        if Rk > 1:
+                            continue
+                        Fk = pend_F or unmatched  # parent k-1 or parent k unmatched
+                        ob[k] = 1 if Rk == 1 else (2 if Fk else 0)
+                    rec(k + 1, h_right, unmatched, DR, unmatched)
+
+    rec(0, 0, False, 0, False)
+    return out
+
+
+def a_transfer(n, verbose=False):
+    if n == 0:
+        return 1
+    dist = {0: 1}                     # row 0: single vertex, state clear
+    for i in range(n + 1):            # rows 0..n
+        W = i + 1                     # width of row i
+        last = (i == n)
+        nd = {}
+        ndget = nd.get
+        for st, cnt in dist.items():
+            for o, m in row_transition(W, st, last).items():
+                nd[o] = ndget(o, 0) + cnt * m
+        dist = nd
+        if verbose:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+            print(f"   row {i}/{n} W={W}: states={len(dist)} peakRSS={rss:.0f}MB", flush=True)
+    return dist.get(0, 0)
+
+
+# ---------------- independent brute force (tiny n) ----------------
+def a_brute(n):
+    Vs = set((i, j) for i in range(n + 1) for j in range(i + 1))
+    E = []
+    for (i, j) in Vs:
+        for (x, y) in ((i, j + 1), (i + 1, j), (i + 1, j + 1)):
+            if (x, y) in Vs:
+                E.append(((i, j), (x, y)))
+    m = len(E)
+    matched = set()
+    cnt = 0
+
+    def dfs(idx):
+        nonlocal cnt
+        if idx == m:
+            for u, w in E:
+                if u not in matched and w not in matched:
+                    return
+            cnt += 1
+            return
+        dfs(idx + 1)
+        u, w = E[idx]
+        if u not in matched and w not in matched:
+            matched.add(u); matched.add(w)
+            dfs(idx + 1)
+            matched.discard(u); matched.discard(w)
+    dfs(0)
+    return cnt
+
+
+KNOWN = {0: 1, 1: 3, 2: 11, 3: 86, 4: 1318, 5: 36149, 6: 1905037,
+         7: 185934481, 8: 34000082535, 9: 11612664144891,
+         10: 7414832091145015,
+         # NEW (this work, dual-lineage certified: Claude row-transfer == Codex bitmask-frontier):
+         11: 8849415239048682597,
+         12: 19741250975280943166187}
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args and args[0] == "brute":
+        hi = int(args[1]) if len(args) > 1 else 4
+        for n in range(0, hi + 1):
+            print("brute", n, a_brute(n), "known", KNOWN.get(n), flush=True)
+        sys.exit(0)
+    verbose = "-v" in args
+    args = [x for x in args if x != "-v"]
+    lo = int(args[0]) if args else 0
+    hi = int(args[1]) if len(args) > 1 else 11
+    for n in range(lo, hi + 1):
+        t0 = time.time()
+        v = a_transfer(n, verbose=verbose)
+        dt = time.time() - t0
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+        chk = KNOWN.get(n)
+        tag = ("OK" if chk == v else ("MISMATCH exp=%d" % chk)) if chk is not None else "NEW"
+        print(f"a({n}) = {v}   [{tag}]  {dt:.2f}s  peakRSS={rss:.0f}MB", flush=True)

@@ -1,0 +1,100 @@
+# Connected dominating set COUNT via frontier partition DP.
+# slot value: -1=out&undominated, -2=out&dominated, >=0 = component label (in-set)
+# state key = (sealed, tuple(slotvals)); sealed = # of components fully closed (<=1 allowed)
+import resource
+from graphs import fib_cube, lucas_cube
+from frontier import cuthill_mckee
+
+def _canon(slotvals):
+    # relabel component ids in order of first appearance
+    remap={}; out=[]
+    for x in slotvals:
+        if x>=0:
+            if x not in remap: remap[x]=len(remap)
+            out.append(remap[x])
+        else: out.append(x)
+    return tuple(out)
+
+def count_connected_dominating(m,adj,order,rss_cap_gb=8.0):
+    pos={v:i for i,v in enumerate(order)}
+    nb=[set(adj[v]) for v in range(m)]
+    closing=[max([pos[v]]+[pos[u] for u in nb[v]]) for v in range(m)]
+    active=[]; states={(0,()):1}; peak=0; nextlbl=0
+    for i,v in enumerate(order):
+        idxof={u:k for k,u in enumerate(active)}
+        bslots=[idxof[u] for u in nb[v] if pos[u]<i]
+        new_active=active+[v]
+        forget=[k for k,u in enumerate(new_active) if closing[u]==i]
+        fset=set(forget)
+        keep=[k for k in range(len(new_active)) if k not in fset]
+        ns={}; get=ns.get
+        for (sealed,sv),c in states.items():
+            # ---- branch v OUT ----
+            dv = -2 if any(sv[s]>=0 for s in bslots) else -1
+            l=list(sv)+[dv]
+            res=_forget_and_close(l,forget,keep,sealed)
+            if res is not None:
+                key=res; ns[key]=get(key,0)+c
+            # ---- branch v IN ----
+            if sealed==0:  # cannot add in-set after a seal
+                l=list(sv)
+                incomp=[l[s] for s in bslots if l[s]>=0]
+                if incomp:
+                    tgt=min(incomp)
+                    for s in range(len(l)):
+                        if l[s]>=0 and l[s] in incomp: l[s]=tgt
+                    lbl=tgt
+                else:
+                    lbl=10**6+i    # fresh unique label
+                for s in bslots:
+                    if l[s]==-1: l[s]=-2   # v dominates out back-neighbors
+                l.append(lbl)
+                res=_forget_and_close(l,forget,keep,sealed)
+                if res is not None:
+                    key=res; ns[key]=get(key,0)+c
+        active=[new_active[k] for k in keep]; states=ns
+        if len(states)>peak: peak=len(states)
+        rss=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1e9
+        if rss>rss_cap_gb: raise MemoryError("RSS %.2fGB step %d states=%d"%(rss,i,len(states)))
+    # end: valid = exactly one component sealed
+    tot=0
+    for (sealed,sv),c in states.items():
+        if sealed==1 and len(sv)==0: tot+=c
+    return tot,peak
+
+def _forget_and_close(l,forget,keep,sealed):
+    # out forgotten must be dominated; in-set forgotten may seal its component (once per component)
+    kept_labels_after=set(l[k] for k in keep if l[k]>=0)
+    sealing=set()
+    for k in forget:
+        val=l[k]
+        if val==-1: return None            # undominated out -> invalid
+        if val==-2: continue
+        if val not in kept_labels_after:   # this component loses its last frontier member
+            sealing.add(val)
+    sealed=sealed+len(sealing)
+    if sealed>=2: return None
+    return (sealed,_canon([l[k] for k in keep]))
+
+if __name__=="__main__":
+    def brute_cds(m,adj):
+        nb=[set(adj[i]) for i in range(m)];cnt=0
+        for mask in range(1,1<<m):
+            S=[v for v in range(m) if (mask>>v)&1]
+            # dominating?
+            if not all(((mask>>v)&1) or any((mask>>u)&1 for u in nb[v]) for v in range(m)): continue
+            # connected?
+            seen=set([S[0]]);st=[S[0]]
+            while st:
+                x=st.pop()
+                for y in nb[x]:
+                    if (mask>>y)&1 and y not in seen: seen.add(y);st.append(y)
+            if len(seen)==len(S): cnt+=1
+        return cnt
+    gate={"Fib":[3,4,12,68,1569,314613],"Luc":[1,4,8,36,373,34872]}
+    for name,fn in [("Fib",fib_cube),("Luc",lucas_cube)]:
+        for n in range(1,7):
+            mm,adj=fn(n); o=cuthill_mckee(mm,adj)
+            d,_=count_connected_dominating(mm,adj,o); b=brute_cds(mm,adj)
+            g=gate[name][n-1] if n-1<len(gate[name]) else None
+            print(name,n,"cds=%d brute=%d %s gate=%s %s"%(d,b,"OK" if d==b else "X",g,"OK" if d==g else "X"))

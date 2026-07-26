@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""
+A321248: number of MAXIMAL INDEPENDENT vertex sets in the n x n stacked book graph.
+Graph = S_{n+1} box P_n : star (1 center + n leaves) Cartesian-product path of n levels.
+  Vertices per level i: center c_i, leaves l_{0..n-1, i}.
+  Edges: c_i--l_{j,i} (star within level); c_i--c_{i+1}; l_{j,i}--l_{j,i+1} (path along levels).
+
+LINEAGE 1: exact orbit/multiset transfer along the level (path) direction.
+The n leaves per level are exchangeable (graph automorphism permuting ribs), so the frontier
+leaf-state is a multiset (iIN, iDOM, iPEND) over per-vertex states
+  0=IN, 1=OUT-dominated, 2=OUT-pending(needs a future neighbour in-set).
+Center frontier state c in {0=IN,1=OUT-dom,2=OUT-pending}.
+Exact big-integers only. O(n) levels x O(n^2) states x O(n) transition = tiny.
+"""
+import sys
+from math import comb
+from collections import defaultdict
+
+def a(n):
+    # state key: (c_state, iIN, iDOM, iPEND)  with iIN+iDOM+iPEND == n
+    # ---- init: level 0 ----
+    dp = defaultdict(int)
+    # center IN -> all n leaves OUT & dominated by center
+    dp[(0, 0, n, 0)] += 1
+    # center OUT -> each leaf IN or OUT(pending); k IN, n-k pending; center dom iff k>=1
+    for k in range(0, n+1):
+        c_state = 1 if k >= 1 else 2      # OUT-dom if some leaf in-set else pending
+        dp[(c_state, k, 0, n-k)] += comb(n, k)
+
+    # ---- transfer through levels 1..n-1 ----
+    for _ in range(1, n):
+        nd = defaultdict(int)
+        for (cp, pIN, pDOM, pPEND), w in dp.items():
+            # --- next center IN ---
+            # needs c_prev not IN (indep), resolves c_prev pending, forces all leaves OUT.
+            # prev leaves: PENDING ones need a future IN in their rib, but rib next is OUT -> invalid.
+            if cp != 0 and pPEND == 0:
+                # all next leaves OUT and dominated by center IN -> all DOM
+                nd[(0, 0, n, 0)] += w
+            # --- next center OUT ---
+            # needs c_prev not PENDING (else prev center never dominated).
+            if cp != 2:
+                # ribs: IN-prev -> forced OUT->DOM ; PENDING-prev -> forced IN ;
+                #       DOM-prev -> choose IN or OUT(->PENDING)
+                for t in range(0, pDOM+1):          # t of the pDOM ribs go IN
+                    iIN = pPEND + t
+                    iDOM = pIN
+                    iPEND = pDOM - t
+                    ways = w * comb(pDOM, t)
+                    kIN = iIN                        # leaves in-set at this level
+                    c_state = 1 if (cp == 0 or kIN >= 1) else 2
+                    nd[(c_state, iIN, iDOM, iPEND)] += ways
+        dp = nd
+
+    # ---- close: no future level; drop any pending ----
+    total = 0
+    for (cp, pIN, pDOM, pPEND), w in dp.items():
+        if cp != 2 and pPEND == 0:
+            total += w
+    return total
+
+GATE = [2,4,22,126,2260,37638,1480106,106342556,9320003978,2071042581066,
+        633815351419648,361949253722666782,381075059450207446426,
+        651096057826702043966544,2118270096010218021292121870]
+
+if __name__ == "__main__":
+    import time
+    maxn = int(sys.argv[1]) if len(sys.argv) > 1 else 18
+    print("# n : a(n)   [gate check]")
+    t0 = time.time()
+    for n in range(1, maxn+1):
+        v = a(n)
+        tag = ""
+        if n-1 < len(GATE):
+            tag = "OK" if v == GATE[n-1] else f"MISMATCH exp={GATE[n-1]}"
+        else:
+            tag = "NEW"
+        print(f"{n} : {v}   [{tag}]")
+    print(f"# elapsed {time.time()-t0:.3f}s")

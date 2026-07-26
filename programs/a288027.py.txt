@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""
+A288027: number of MINIMAL edge covers in the grid graph P_n X P_n.
+
+A minimal edge cover = an edge cover (every vertex incident to >=1 chosen edge)
+such that removing any chosen edge destroys the covering property.  Equivalently
+(OEIS comment): the chosen edges form a spanning subgraph whose every connected
+component is a STAR (K_{1,k}, k>=1).
+
+STRUCTURAL CHARACTERIZATION USED (subgraph H of the grid):
+  (A) every vertex has degree >= 1 in H            [edge cover]
+  (B) every edge of H has at least one endpoint of degree 1 in H
+      [<=> no component contains a path P_4 <=> every component is a star]
+We count SUBGRAPHS H (not colorings) satisfying (A)+(B).  This avoids the
+K_{1,1} center/leaf double-count.
+
+METHOD (exact deterministic column transfer over big-ints; M25 pattern):
+  Vertices (r,c), r,c in 0..n-1. Edges: horizontal (r,c)-(r,c+1), vertical
+  (r,c)-(r+1,c). Process COLUMN by column, left to right.  A vertex's neighbours
+  are left,right,up,down (up/down within its column).
+
+  Per-row boundary state carried between column c-1 and c encodes the HORIZONTAL
+  edge coming INTO (r,c) from (r,c-1) and its constraint contribution:
+     L_r = 0 : no left edge into (r,c)
+     L_r = 1 : left edge present AND its other endpoint (r,c-1) had degree 1
+               -> constraint (B) for this horizontal edge already satisfied
+     L_r = 2 : left edge present AND (r,c-1) had degree >= 2
+               -> constraint (B) NOW FORCES d(r,c) == 1
+  (3 states/row, 2 bits packed -- identical footprint to the M25 engine.)
+
+  Column transition: given incoming L[0..n-1], choose vertical edges V (between
+  consecutive rows of this column) and right edges R (horizontal to column c+1),
+  processed row-by-row.  For each row r let
+     pd_r = (left present) + (vert-up present) + (vert-down present)   # partial degree
+     d    = pd_r + R_r                                                  # full degree of (r,c)
+  Enforce:
+     * d >= 1                                   (A)
+     * if L_r == 2  then d == 1                 (B) for the incoming left edge
+     * vertical edge between r-1 and r (if present): min(d(r-1),d(r)) == 1   (B)
+  Emit outgoing digit for (r,c) w.r.t. its right edge R_r (= left edge of col c+1):
+     R_r == 0            -> 0
+     R_r == 1 and d == 1 -> 1        (this endpoint satisfies (B), no force downstream)
+     R_r == 1 and d >= 2 -> 2        (force d(r,c+1) == 1 downstream)
+
+  LAST column (c=n-1): force R=0 (no column to the right); the sole outgoing
+  state is all-zero and its count is the answer.
+  Initial: incoming to column 0 = all-zero state, count 1.
+"""
+import sys, time, resource
+
+# digit per row in {0,1,2}, 2 bits/row packed into an int at bits [2r, 2r+1].
+
+def column_transitions(n, a_packed, last):
+    """Incoming PACKED state -> {packed_outgoing_state: multiplicity}."""
+    a = [(a_packed >> (2 * r)) & 3 for r in range(n)]
+    out = {}
+    ob = [0] * n
+
+    def rec(r, prev_ve, prev_deg):
+        # prev_ve: vertical edge between r-1 and r present (0/1)
+        # prev_deg: full degree class of vertex r-1 (1 == exactly 1, 2 == >=2); valid if r>0
+        if r == n:
+            key = 0
+            for i in range(n - 1, -1, -1):
+                key = (key << 2) | ob[i]
+            out[key] = out.get(key, 0) + 1
+            return
+        Lr = a[r]
+        left_present = 1 if Lr else 0
+        req1 = (Lr == 2)
+        for ve_down in (0, 1):
+            if ve_down and r == n - 1:
+                continue
+            for Rp in (0, 1):
+                if last and Rp:
+                    continue
+                pd = left_present + prev_ve + ve_down
+                d = pd + Rp
+                if d < 1:
+                    continue
+                if req1 and d != 1:
+                    continue
+                # validate vertical edge between r-1 and r
+                if prev_ve:
+                    if not (prev_deg == 1 or d == 1):
+                        continue
+                dc = 1 if d == 1 else 2
+                if Rp == 0:
+                    ob[r] = 0
+                else:
+                    ob[r] = 1 if d == 1 else 2
+                rec(r + 1, ve_down, dc)
+
+    rec(0, 0, 0)
+    return out
+
+
+def a_transfer(n, verbose=False, cache_trans=True):
+    if n == 0:
+        return 1          # empty grid, empty cover is vacuously minimal
+    dist = {0: 1}
+    cache = {} if cache_trans else None
+    for c in range(n):
+        last = (c == n - 1)
+        nd = {}
+        ndget = nd.get
+        if last:
+            for st, cnt in dist.items():
+                for o, m in column_transitions(n, st, True).items():
+                    nd[o] = ndget(o, 0) + cnt * m
+        elif cache is not None:
+            for st, cnt in dist.items():
+                tr = cache.get(st)
+                if tr is None:
+                    tr = column_transitions(n, st, False)
+                    cache[st] = tr
+                for o, m in tr.items():
+                    nd[o] = ndget(o, 0) + cnt * m
+        else:
+            for st, cnt in dist.items():
+                for o, m in column_transitions(n, st, False).items():
+                    nd[o] = ndget(o, 0) + cnt * m
+        dist = nd
+        if verbose:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+            csz = len(cache) if cache is not None else 0
+            print(f"   col {c+1}/{n}: states={len(dist)} cache={csz} peakRSS={rss:.0f}MB", flush=True)
+    return sum(dist.values())
+
+
+# ---------------- memory-light CSR engine (stores multiplicities) --------------
+
+def a_transfer_csr(n, verbose=False):
+    import array
+    if n == 0:
+        return 1
+    idx = {0: 0}
+    order = [0]
+    indptr = array.array('Q'); indptr.append(0)
+    indices = array.array('I')
+    data = array.array('Q')
+    head = 0
+    while head < len(order):
+        s = order[head]
+        for o, m in column_transitions(n, s, False).items():
+            j = idx.get(o)
+            if j is None:
+                j = len(order); idx[o] = j; order.append(o)
+            indices.append(j); data.append(m)
+        indptr.append(len(indices))
+        head += 1
+    ns = len(order); nnz = len(indices)
+    if verbose:
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+        print(f"   n={n}: reachable states={ns} nnz={nnz} CSR built peakRSS={rss:.0f}MB", flush=True)
+    # last-column weight per state
+    L = array.array('Q')
+    for s in order:
+        tot = 0
+        for m in column_transitions(n, s, True).values():
+            tot += m
+        L.append(tot)
+    v = [0] * ns
+    v[0] = 1
+    for c in range(n - 1):
+        nv = [0] * ns
+        for i in range(ns):
+            vi = v[i]
+            if vi:
+                lo = indptr[i]; hi = indptr[i + 1]
+                for k in range(lo, hi):
+                    nv[indices[k]] += vi * data[k]
+        v = nv
+        if verbose:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+            print(f"   n={n}: applied col {c+1}/{n-1} peakRSS={rss:.0f}MB", flush=True)
+    total = 0
+    for i in range(ns):
+        if v[i]:
+            total += v[i] * L[i]
+    return total
+
+
+# ---------------- independent brute force (tiny n) ----------------
+
+def a_brute(n):
+    """Enumerate all edge subsets of the n x n grid; count minimal edge covers."""
+    if n == 0:
+        return 1
+    edges = []
+    for r in range(n):
+        for c in range(n):
+            if c + 1 < n:
+                edges.append(((r, c), (r, c + 1)))
+            if r + 1 < n:
+                edges.append(((r, c), (r + 1, c)))
+    V = [(r, c) for r in range(n) for c in range(n)]
+    m = len(edges)
+    count = 0
+    for mask in range(1 << m):
+        deg = {v: 0 for v in V}
+        chosen = []
+        for i in range(m):
+            if mask & (1 << i):
+                u, w = edges[i]
+                deg[u] += 1; deg[w] += 1
+                chosen.append((u, w))
+        # (A) edge cover
+        if any(deg[v] == 0 for v in V):
+            continue
+        # (B) every chosen edge has a degree-1 endpoint
+        ok = True
+        for u, w in chosen:
+            if deg[u] != 1 and deg[w] != 1:
+                ok = False; break
+        if ok:
+            count += 1
+    return count
+
+
+KNOWN = {1: 0, 2: 2, 3: 38, 4: 1834, 5: 419710, 6: 356269056,
+         7: 1163645044100, 8: 15000387107144576, 9: 749707067231291403016}
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args and args[0] == "brute":
+        hi = int(args[1]) if len(args) > 1 else 4
+        for n in range(1, hi + 1):
+            print("brute", n, a_brute(n), "known", KNOWN.get(n), flush=True)
+        sys.exit(0)
+    verbose = "-v" in args
+    nocache = "-nocache" in args
+    dicteng = "-dict" in args
+    args = [x for x in args if x not in ("-v", "-nocache", "-dict")]
+    lo = int(args[0]) if args else 1
+    hi = int(args[1]) if len(args) > 1 else 10
+    for n in range(lo, hi + 1):
+        t0 = time.time()
+        if dicteng:
+            v = a_transfer(n, verbose=verbose, cache_trans=not nocache)
+        else:
+            v = a_transfer_csr(n, verbose=verbose)
+        dt = time.time() - t0
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+        chk = KNOWN.get(n)
+        tag = ("OK" if chk == v else ("MISMATCH exp=%d" % chk)) if chk is not None else "NEW"
+        print(f"a({n}) = {v}   [{tag}]  {dt:.2f}s  peakRSS={rss:.0f}MB", flush=True)

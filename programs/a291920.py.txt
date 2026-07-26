@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""
+SCOUT_C — exact count of DOMINATING SETS in Fibonacci cubes (A291920) and
+Lucas cubes (A365580), via a frontier/boundary transfer DP that beats the
+~2^|V| method used by the OEIS authors (who walled at |V|=34/29 vertices).
+
+New terms (dual-verified, see RESULT.md):
+  A291920  Fibonacci cube  a(8) = 13054740147490455   (Gamma_8, 55 vertices)
+  A365580  Lucas cube      a(8) = 48347199982989      (Lambda_8, 47 vertices)
+
+Method: process vertices in a Cuthill-McKee (bandwidth-reduced) order.  Each
+active "frontier" vertex carries a status in {0:out-undominated, 1:out-dominated,
+2:in-set}.  A vertex is forgotten once all its neighbors are decided; on forget
+it must be dominated (status != 0).  Exact Python big integers throughout.
+
+Run:  python3 solve.py            # reproduces gate a(1..7) and prints a(8)
+"""
+import sys, time, resource
+from itertools import product
+from collections import deque
+
+
+# ---------- graph construction ----------
+def _mkadj(verts):
+    idx = {v: i for i, v in enumerate(verts)}
+    m = len(verts)
+    adj = [[] for _ in range(m)]
+    for v, i in idx.items():
+        for k in range(len(v)):
+            w = list(v); w[k] ^= 1; w = tuple(w)
+            j = idx.get(w)
+            if j is not None:
+                adj[i].append(j)
+    return m, adj
+
+
+def fib_cube(n):
+    verts = [s for s in product((0, 1), repeat=n)
+             if all(not (s[i] == 1 and s[i + 1] == 1) for i in range(n - 1))]
+    return _mkadj(verts)
+
+
+def lucas_cube(n):
+    if n == 1:
+        verts = [(0,)]                     # single vertex, |V|=L_1=1
+    else:
+        verts = [s for s in product((0, 1), repeat=n)
+                 if all(not (s[i] == 1 and s[i + 1] == 1) for i in range(n - 1))
+                 and not (s[0] == 1 and s[n - 1] == 1)]
+    return _mkadj(verts)
+
+
+# ---------- vertex ordering (bandwidth reduction) ----------
+def cuthill_mckee(m, adj):
+    deg = [len(adj[i]) for i in range(m)]
+    visited = [False] * m
+    order = []
+    for start in sorted(range(m), key=lambda x: deg[x]):
+        if visited[start]:
+            continue
+        q = deque([start]); visited[start] = True
+        while q:
+            v = q.popleft(); order.append(v)
+            for w in sorted(adj[v], key=lambda x: deg[x]):
+                if not visited[w]:
+                    visited[w] = True; q.append(w)
+    return order
+
+
+# ---------- frontier DP: count all dominating sets ----------
+def count_dominating(m, adj, order, rss_cap_gb=8.0):
+    pos = {v: i for i, v in enumerate(order)}
+    nb = [set(adj[v]) for v in range(m)]
+    closing = [max([pos[v]] + [pos[u] for u in nb[v]]) for v in range(m)]
+    active = []
+    states = {(): 1}
+    peak = 0
+    for i, v in enumerate(order):
+        idxof = {u: k for k, u in enumerate(active)}
+        bslots = tuple(idxof[u] for u in nb[v] if pos[u] < i)
+        new_active = active + [v]
+        forget_slots = [k for k, u in enumerate(new_active) if closing[u] == i]
+        fset = set(forget_slots)
+        keep = [k for k in range(len(new_active)) if k not in fset]
+        ns = {}
+        get = ns.get
+        for st, c in states.items():
+            # branch: v IN set  (status 2); marks undominated back-neighbors dominated
+            l = list(st)
+            for s in bslots:
+                if l[s] == 0:
+                    l[s] = 1
+            l.append(2)
+            ok = True
+            for s in forget_slots:
+                if l[s] == 0:
+                    ok = False; break
+            if ok:
+                k = tuple(l[j] for j in keep)
+                ns[k] = get(k, 0) + c
+            # branch: v OUT  (dominated iff a back-neighbor is in-set)
+            dominated = any(st[s] == 2 for s in bslots)
+            l2 = list(st); l2.append(1 if dominated else 0)
+            ok = True
+            for s in forget_slots:
+                if l2[s] == 0:
+                    ok = False; break
+            if ok:
+                k = tuple(l2[j] for j in keep)
+                ns[k] = get(k, 0) + c
+        active = [new_active[k] for k in keep]
+        states = ns
+        if len(states) > peak:
+            peak = len(states)
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e9  # bytes on macOS
+        if rss > rss_cap_gb:
+            raise MemoryError("RSS %.2fGB exceeded cap at step %d, states=%d" %
+                              (rss, i, len(states)))
+    return states.get((), 0), peak
+
+
+GATE = {
+    "Fibonacci (A291920)": (fib_cube,  [3, 5, 19, 145, 4259, 988927, 7179358203]),
+    "Lucas (A365580)":     (lucas_cube, [1, 5, 9, 73, 1015, 117147, 215629181]),
+}
+
+
+def main():
+    nmax = int(sys.argv[1]) if len(sys.argv) > 1 else 8
+    for label, (fn, known) in GATE.items():
+        print("\n=== %s dominating sets ===" % label)
+        for n in range(1, nmax + 1):
+            m, adj = fn(n)
+            o = cuthill_mckee(m, adj)
+            t0 = time.time()
+            d, ps = count_dominating(m, adj, o)
+            dt = time.time() - t0
+            if n - 1 < len(known):
+                tag = "gate OK" if d == known[n - 1] else "GATE MISMATCH!!"
+            else:
+                tag = "** NEW **"
+            print("  a(%d) = %-20d |V|=%3d peak_states=%-9d %6.1fs  %s"
+                  % (n, d, m, ps, dt, tag))
+
+
+if __name__ == "__main__":
+    main()

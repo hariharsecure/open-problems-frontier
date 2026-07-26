@@ -1,0 +1,395 @@
+#!/usr/bin/env python3
+"""
+A297558: number of MAXIMUM matchings (matchings of maximum CARDINALITY) in the
+n-Apollonian network.  Also computes A292429 (number of ALL matchings) as an
+independent second gate.
+
+n-Apollonian network (iteration n): start from a triangle; iteration 1 inserts one
+vertex in the triangle joined to all 3 corners  ->  K4 (so the 1-Apollonian net = K4).
+Each further iteration inserts a new vertex into EVERY current triangular face, joined
+to that face's 3 corners.  It is a 3-tree (treewidth 3): a maximal planar graph.
+Vertices at iteration n = (5+3^n)/2 (OEIS A289521).
+
+MATCHING generating polynomial P_n(x) = sum over matchings M of x^{|M|}.
+  sum of coeffs  P_n(1)      = A292429(n)  (total matchings)
+  leading coeff  [x^deg]P_n  = A297558(n)  (# of maximum matchings)
+
+Two INDEPENDENT transfer lineages + an explicit-graph brute anchor:
+
+  Lineage 1 (mine, "8-state"): a gadget G_k = the interior structure subdividing a
+    triangle to depth k, EXCLUDING the 3 triangle edges themselves.  State keyed by the
+    full triple (satA,satB,satC) in {0,1}^3 = which of the 3 corners are saturated by an
+    interior edge; value = matching generating polynomial.  G_0 = empty.  G_k inserts a
+    center d joined to the 3 corners (edges dA,dB,dC), and places three G_{k-1} in the
+    sub-triangles (A,B,d),(B,d,C -> using shared corners),(C,A,d).  Merge over the 4
+    vertices A,B,C,d with the matching (<=1 incident edge each) constraint.  Close the
+    outer triangle at the end.
+
+  Lineage 2 (Howroyd, A292429 PARI, reimplemented): aggregate state [m0,m1,m2,m3] where
+    m_k = generating poly summed over gadget matchings with EXACTLY k of the 3 corners
+    saturated internally (uses corner symmetry).  Different encoding, different closing.
+
+  Brute: build the explicit graph for small n, enumerate all matchings by DFS over edges.
+
+WINDOWED leading-coefficient transfer: since all coefficients are NONNEGATIVE and the
+transfer uses only +, *, and x^k-shift, the top-T coefficients of every intermediate
+polynomial are maintained EXACTLY for ANY fixed window T (lower coeffs never feed upward).
+Hence the leading coefficient a(n) is exact with a tiny window -> a(9), a(10) are cheap.
+"""
+import sys, time, resource
+
+# ============================================================================
+# polynomial helpers (dense lists, index = exponent, big-int coeffs, nonneg)
+# ============================================================================
+def pmul(a, b):
+    if not a or not b:
+        return []
+    r = [0] * (len(a) + len(b) - 1)
+    for i, ai in enumerate(a):
+        if ai:
+            for j, bj in enumerate(b):
+                if bj:
+                    r[i + j] += ai * bj
+    return r
+
+def padd(a, b):
+    if len(a) < len(b):
+        a, b = b, a
+    r = list(a)
+    for j, bj in enumerate(b):
+        r[j] += bj
+    return r
+
+def pshift(a, k):
+    return ([0] * k + a) if a else a
+
+def leadcoeff(a):
+    for i in range(len(a) - 1, -1, -1):
+        if a[i]:
+            return i, a[i]
+    return 0, 0
+
+# ============================================================================
+# Lineage 1 : my 8-state gadget DP  (FULL polynomial)
+# ============================================================================
+def L1_step(D):
+    """D: dict {(sa,sb,sc): poly} for G_{k-1}; return dict for G_k."""
+    states = list(D.items())
+    Dn = {}
+    # center edges eA,eB,eC in {0,1}; sub states s1 on (A,B,d), s2 on (B,C,d), s3 on (C,A,d)
+    for (a1, b1, d1), p1 in states:
+        for (b2, c2, d2), p2 in states:
+            if b1 and b2:          # vertex B: from s1 and s2
+                continue
+            p12 = pmul(p1, p2)
+            for (c3, a3, d3), p3 in states:
+                if c2 and c3:      # vertex C: from s2 and s3
+                    continue
+                if a1 and a3:      # vertex A: from s1 and s3
+                    continue
+                dsub = d1 + d2 + d3            # center saturation from subs (<=1 required)
+                if dsub > 1:
+                    continue
+                base = pmul(p12, p3)
+                for eA in (0, 1):
+                    if eA and (a1 or a3):      # A already saturated by a sub
+                        continue
+                    for eB in (0, 1):
+                        if eB and (b1 or b2):
+                            continue
+                        for eC in (0, 1):
+                            if eC and (c2 or c3):
+                                continue
+                            if dsub + eA + eB + eC > 1:   # center vertex <=1 incident
+                                continue
+                            satA = a1 | a3 | eA
+                            satB = b1 | b2 | eB
+                            satC = c2 | c3 | eC
+                            k = eA + eB + eC
+                            poly = pshift(base, k)
+                            key = (satA, satB, satC)
+                            Dn[key] = padd(Dn.get(key, []), poly)
+    return Dn
+
+def L1_close(D):
+    """Add the 3 outer triangle edges (AB,BC,CA) to top gadget -> full P_n(x)."""
+    total = []
+    for (sa, sb, sc), p in D.items():
+        # matching among 3 outer edges on {A,B,C}: {} or one edge whose endpoints free
+        usable = 0
+        if not sa and not sb: usable += 1   # AB
+        if not sb and not sc: usable += 1   # BC
+        if not sc and not sa: usable += 1   # CA
+        contrib = padd(p, pmul([0, usable], p)) if usable else p
+        total = padd(total, contrib)
+    return total
+
+def L1_poly(n):
+    D = {(0, 0, 0): [1]}
+    for _ in range(n):
+        D = L1_step(D)
+    return L1_close(D)
+
+# ============================================================================
+# Lineage 2 : Howroyd aggregate [m0,m1,m2,m3] transfer  (FULL polynomial)
+# ============================================================================
+def L2_step(S):
+    m0, m1, m2, m3 = S
+    def M(*terms):                       # sum of poly products
+        acc = []
+        for t in terms:
+            acc = padd(acc, t)
+        return acc
+    x = [0, 1]
+    s0 = M(pmul(pmul(m0, m0), m0),
+           pmul(pmul([3], pmul(m0, m0)), m1))
+    s1 = M(pmul([2], pmul(pmul(m0, m0), m1)),
+           pmul([4], pmul(m0, pmul(m1, m1))),
+           pmul([2], pmul(pmul(m0, m0), m2)),
+           pmul(x, pmul(pmul(m0, m0), m0)))
+    s2 = M(pmul(pmul(m0, m0), m2),
+           pmul([3], pmul(m0, pmul(m1, m1))),
+           pmul([8], pmul(m0, pmul(m1, m2))),
+           pmul(pmul(m0, m0), m3),
+           pmul([3], pmul(m1, pmul(m1, m1))),
+           pmul([4], pmul(x, pmul(pmul(m0, m0), m1))))
+    s3 = M(pmul([6], pmul(m0, pmul(m1, m2))),
+           pmul([2], pmul(m1, pmul(m1, m1))),
+           pmul([12], pmul(pmul(m1, m1), m2)),
+           pmul([6], pmul(m0, pmul(m2, m2))),
+           pmul([6], pmul(m0, pmul(m1, m3))),
+           pmul([3], pmul(x, M(pmul(pmul(m0, m0), m2),
+                                pmul([3], pmul(m0, pmul(m1, m1)))))))
+    return [s0, s1, s2, s3]
+
+def L2_poly(n):
+    S = [[1], [], [], []]                # [1,0,0,0]
+    for _ in range(n):
+        S = L2_step(S)
+    m0, m1, m2, m3 = S
+    # sum_{k} binom(3,k) m_k  + 3*(m0+m1)*x
+    out = M0 = padd(padd(m0, pmul([3], m1)), padd(pmul([3], m2), m3))
+    out = padd(out, pmul([0, 3], padd(m0, m1)))
+    return out
+
+# ============================================================================
+# WINDOWED leading-coeff transfer (exact top-T, any T) -- used for large n
+# poly repr: (deg, coeffs) with coeffs[0]=[x^deg], length<=T (top-down)
+# ============================================================================
+class WPoly:
+    __slots__ = ("deg", "c", "T")
+    def __init__(self, deg, c, T):
+        # c: list top-down (c[0] = coeff of x^deg)
+        self.c = c[:T]
+        self.deg = deg
+        self.T = T
+
+ZERO = None
+def wmk(deg, c, T):
+    return WPoly(deg, c, T)
+
+def wadd(a, b, T):
+    if a is None: return b
+    if b is None: return a
+    deg = max(a.deg, b.deg)
+    c = [0] * min(T, deg + 1)
+    for (off, coeffs) in ((deg - a.deg, a.c), (deg - b.deg, b.c)):
+        for i, v in enumerate(coeffs):
+            idx = off + i
+            if idx < len(c):
+                c[idx] += v
+    return WPoly(deg, c, T)
+
+def wmul(a, b, T):
+    if a is None or b is None: return None
+    deg = a.deg + b.deg
+    L = min(T, deg + 1)
+    c = [0] * L
+    for i, ai in enumerate(a.c):
+        if ai:
+            for j, bj in enumerate(b.c):
+                if bj and i + j < L:
+                    c[i + j] += ai * bj
+    return WPoly(deg, c, T)
+
+def wshift(a, k):
+    if a is None: return None
+    return WPoly(a.deg + k, list(a.c), a.T)
+
+def wscale(a, s):
+    if a is None: return None
+    return WPoly(a.deg, [v * s for v in a.c], a.T)
+
+# ---- Lineage 1 windowed ----
+def L1w_step(D, T):
+    states = list(D.items())
+    Dn = {}
+    for (a1, b1, d1), p1 in states:
+        for (b2, c2, d2), p2 in states:
+            if b1 and b2: continue
+            p12 = wmul(p1, p2, T)
+            for (c3, a3, d3), p3 in states:
+                if c2 and c3: continue
+                if a1 and a3: continue
+                dsub = d1 + d2 + d3
+                if dsub > 1: continue
+                base = wmul(p12, p3, T)
+                for eA in (0, 1):
+                    if eA and (a1 or a3): continue
+                    for eB in (0, 1):
+                        if eB and (b1 or b2): continue
+                        for eC in (0, 1):
+                            if eC and (c2 or c3): continue
+                            if dsub + eA + eB + eC > 1: continue
+                            key = (a1 | a3 | eA, b1 | b2 | eB, c2 | c3 | eC)
+                            poly = wshift(base, eA + eB + eC)
+                            Dn[key] = wadd(Dn.get(key), poly, T)
+    return Dn
+
+def L1w_poly(n, T):
+    D = {(0, 0, 0): WPoly(0, [1], T)}
+    for _ in range(n):
+        D = L1w_step(D, T)
+    total = None
+    for (sa, sb, sc), p in D.items():
+        usable = (0 if sa or sb else 1) + (0 if sb or sc else 1) + (0 if sc or sa else 1)
+        contrib = wadd(p, wshift(wscale(p, usable), 1), T) if usable else p
+        total = wadd(total, contrib, T)
+    return total
+
+# ---- Lineage 2 windowed ----
+def L2w_step(S, T):
+    m0, m1, m2, m3 = S
+    def MM(*terms):
+        acc = None
+        for t in terms:
+            acc = wadd(acc, t, T)
+        return acc
+    def P(*fs):
+        acc = None
+        for f in fs:
+            acc = f if acc is None else wmul(acc, f, T)
+        return acc
+    def SC(s, f):
+        return wscale(f, s)
+    def X(f):
+        return wshift(f, 1)
+    s0 = MM(P(m0, m0, m0), SC(3, P(m0, m0, m1)))
+    s1 = MM(SC(2, P(m0, m0, m1)), SC(4, P(m0, m1, m1)),
+            SC(2, P(m0, m0, m2)), X(P(m0, m0, m0)))
+    s2 = MM(P(m0, m0, m2), SC(3, P(m0, m1, m1)), SC(8, P(m0, m1, m2)),
+            P(m0, m0, m3), SC(3, P(m1, m1, m1)), SC(4, X(P(m0, m0, m1))))
+    s3 = MM(SC(6, P(m0, m1, m2)), SC(2, P(m1, m1, m1)), SC(12, P(m1, m1, m2)),
+            SC(6, P(m0, m2, m2)), SC(6, P(m0, m1, m3)),
+            SC(3, X(MM(P(m0, m0, m2), SC(3, P(m0, m1, m1))))))
+    return [s0, s1, s2, s3]
+
+def L2w_poly(n, T):
+    S = [WPoly(0, [1], T), None, None, None]
+    for _ in range(n):
+        S = L2w_step(S, T)
+    m0, m1, m2, m3 = S
+    out = wadd(wadd(m0, wscale(m1, 3), T), wadd(wscale(m2, 3), m3, T), T)
+    out = wadd(out, wshift(wscale(wadd(m0, m1, T), 3), 1), T)
+    return out
+
+def wlead(a):
+    return (a.deg, a.c[0]) if a is not None else (0, 0)
+
+# ============================================================================
+# Explicit-graph brute force (small n)  -- independent construction anchor
+# ============================================================================
+def build_apollonian(n):
+    """Return (num_vertices, edges) for iteration-n Apollonian network."""
+    # start: triangle 0,1,2  ; faces list of 3-tuples of current triangular faces
+    verts = 3
+    edges = set()
+    edges.update([(0, 1), (1, 2), (0, 2)])
+    faces = [(0, 1, 2)]
+    for _ in range(n):
+        newfaces = []
+        for (a, b, c) in faces:
+            d = verts; verts += 1
+            for u in (a, b, c):
+                edges.add(tuple(sorted((u, d))))
+            newfaces += [(a, b, d), (b, c, d), (a, c, d)]
+        faces = newfaces
+    return verts, sorted(edges)
+
+def brute_poly(n):
+    V, edges = build_apollonian(n)
+    m = len(edges)
+    poly = [0] * (m + 1)
+    used = [False] * V
+    def dfs(i, size):
+        if i == m:
+            poly[size] += 1
+            return
+        dfs(i + 1, size)                      # skip edge i
+        u, w = edges[i]
+        if not used[u] and not used[w]:
+            used[u] = used[w] = True
+            dfs(i + 1, size + 1)
+            used[u] = used[w] = False
+    dfs(0, 0)
+    while poly and poly[-1] == 0:
+        poly.pop()
+    return poly
+
+# ============================================================================
+KNOWN_MAX = {  # A297558
+    1: 3, 2: 32, 3: 738, 4: 615514464,
+    5: 5030805301520123200352256,
+    6: 72175948705150863615789780847197889452411340074927861143342108815392768,
+}
+KNOWN_TOTAL = {  # A292429
+    1: 10, 2: 99, 3: 38613, 4: 377686178656,
+    5: 28685416388231593782505635840000,
+}
+
+def rss():
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args and args[0] == "brute":
+        hi = int(args[1]) if len(args) > 1 else 3
+        for n in range(1, hi + 1):
+            p = brute_poly(n)
+            deg = len(p) - 1
+            print(f"brute n={n}: total={sum(p)} (exp {KNOWN_TOTAL.get(n)})  "
+                  f"maxsize={deg} maxcount={p[-1]} (exp {KNOWN_MAX.get(n)})", flush=True)
+        sys.exit(0)
+
+    if args and args[0] == "full":
+        hi = int(args[1]) if len(args) > 1 else 8
+        for n in range(1, hi + 1):
+            t0 = time.time()
+            p1 = L1_poly(n); p2 = L2_poly(n)
+            d1, c1 = leadcoeff(p1); d2, c2 = leadcoeff(p2)
+            tot1, tot2 = sum(p1), sum(p2)
+            ok = (p1 == p2)
+            gate_m = (c1 == KNOWN_MAX.get(n, c1))
+            gate_t = (tot1 == KNOWN_TOTAL.get(n, tot1))
+            print(f"n={n}: L1==L2:{ok}  maxsize={d1} maxcount={c1} "
+                  f"[{'OK' if gate_m else 'MISMATCH'}]  total={tot1} "
+                  f"[{'OK' if gate_t else 'MISMATCH'}]  {time.time()-t0:.2f}s "
+                  f"RSS={rss():.0f}MB", flush=True)
+        sys.exit(0)
+
+    # default: windowed leading-coeff for a(1)..a(hi), dual lineage
+    T = 16
+    for a in args:
+        if a.startswith("T="): T = int(a[2:])
+    args = [a for a in args if not a.startswith("T=")]
+    hi = int(args[0]) if args else 10
+    for n in range(1, hi + 1):
+        t0 = time.time()
+        w1 = L1w_poly(n, T); w2 = L2w_poly(n, T)
+        d1, c1 = wlead(w1); d2, c2 = wlead(w2)
+        match = (d1 == d2 and c1 == c2)
+        gate = KNOWN_MAX.get(n)
+        tag = "MATCH" if match else "DUAL-MISMATCH"
+        gtag = "" if gate is None else (" GATE-OK" if c1 == gate else f" GATE-FAIL(exp {gate})")
+        print(f"a({n}) maxsize={d1} = {c1}   [{tag}{gtag}]  {time.time()-t0:.2f}s "
+              f"RSS={rss():.0f}MB", flush=True)

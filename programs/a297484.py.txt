@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+A297484: number of MAXIMAL matchings in the n-triangular graph
+         = Johnson graph J(n,2) = line graph of K_n.
+Vertices = 2-subsets of [n]; two adjacent iff they share an element.
+
+KEY REDUCTION
+-------------
+A vertex of J(n,2) is an EDGE of K_n. An edge of J(n,2) joins two K_n-edges
+that share a K_n-vertex = a "cherry" (path P_3 in K_n). A matching in J(n,2)
+= a set of vertex-disjoint cherries = a way to pair up some K_n-edges into
+cherries (each K_n-edge in <=1 cherry). Unmatched J(n,2)-vertices = leftover
+K_n-edges ("singletons"). MAXIMAL  <=>  the unmatched vertices are independent
+in J(n,2)  <=>  the singleton K_n-edges are pairwise vertex-disjoint = a
+MATCHING S in K_n.
+
+So a maximal matching of J(n,2) <-> (S, P) where:
+  * S = a matching of K_n (the singleton edges), and
+  * P = a partition of E(K_n)\S into cherries (a P3-decomposition of K_n\S).
+
+Hence
+  a(n) = sum_{S matching of K_n}  Phi(K_n \ S)
+       = sum_{k>=0}  M(n,k) * Phi(K_n minus a k-matching)
+where M(n,k) = # k-matchings of K_n = n!/(k! 2^k (n-2k)!) and
+Phi(H) = # P3-decompositions of H.
+
+COMPUTING Phi(H) EXACTLY
+------------------------
+Phi(H) = E[ prod_{{u,v} in E(H)} (X_u + X_v) ],  X_i iid standard normal.
+Reason: expand each factor as choosing the cherry-center (X_u or X_v); the
+Gaussian expectation of prod_v X_v^{c_v} is prod_v (c_v-1)!! and vanishes
+unless every c_v is even -- exactly the number of ways to pair the center-
+edges at each vertex = number of P3-decompositions. (Wick: also equals the
+sum over pairings of E(H) of prod |e∩f|, i.e. pairings into cherries.)
+We evaluate the Gaussian moment EXACTLY by eliminating one variable at a
+time, keeping an exact integer polynomial in the remaining variables and
+using  E[x^e] = (e-1)!! for e even, 0 for e odd.  All big-int, deterministic.
+"""
+import sys, time, resource, math
+from collections import defaultdict
+from itertools import combinations
+
+
+# ---------- double factorial (e-1)!! for even e, df[0]=1 ----------
+def make_df(maxe):
+    df = {0: 1}
+    e = 2
+    while e <= maxe:
+        df[e] = df[e - 2] * (e - 1)
+        e += 2
+    return df
+
+
+def phi(n, edges):
+    """# P3-decompositions of graph on vertices 0..n-1 with given edge list.
+       Exact Gaussian-moment variable elimination."""
+    df = make_df(2 * len(edges) + 2)
+    inc = [[] for _ in range(n)]          # edges attached at their smaller endpoint
+    for (u, v) in edges:
+        a, b = (u, v) if u < v else (v, u)
+        inc[a].append(b)
+    poly = {tuple([0] * n): 1}            # monomial exps -> coeff
+    for v in range(n):
+        for w in inc[v]:                  # multiply by (x_v + x_w)
+            np_ = defaultdict(int)
+            for key, c in poly.items():
+                k1 = list(key); k1[v] += 1; np_[tuple(k1)] += c
+                k2 = list(key); k2[w] += 1; np_[tuple(k2)] += c
+            poly = np_
+        np_ = defaultdict(int)            # integrate out x_v
+        for key, c in poly.items():
+            e = key[v]
+            if e & 1:
+                continue
+            k = list(key); k[v] = 0
+            np_[tuple(k)] += c * df[e]
+        poly = np_
+    return poly.get(tuple([0] * n), 0)
+
+
+def M(n, k):
+    """# of k-matchings in K_n."""
+    return math.factorial(n) // (math.factorial(k) * (2 ** k) * math.factorial(n - 2 * k))
+
+
+def a_formula(n):
+    if n < 2:
+        return 1  # degenerate (no vertices / no edges): empty matching is the unique maximal one
+    full = list(combinations(range(n), 2))
+    total = 0
+    for k in range(0, n // 2 + 1):
+        # K_n minus a fixed k-matching {(0,1),(2,3),...}
+        removed = set((2 * i, 2 * i + 1) for i in range(k))
+        edges = [e for e in full if e not in removed]
+        total += M(n, k) * phi(n, edges)
+    return total
+
+
+# ---------------- independent brute force on J(n,2) ----------------
+def a_brute(n):
+    """Direct enumeration of maximal matchings of J(n,2). Small n only."""
+    verts = list(combinations(range(n), 2))         # 2-subsets of [n]
+    idx = {v: i for i, v in enumerate(verts)}
+    N = len(verts)
+    # J(n,2) edges: two 2-subsets adjacent iff they intersect
+    jedges = []
+    for i in range(N):
+        for j in range(i + 1, N):
+            if set(verts[i]) & set(verts[j]):
+                jedges.append((i, j))
+    m = len(jedges)
+    matched = [False] * N
+    count = 0
+
+    def dfs(i):
+        nonlocal count
+        if i == m:
+            # maximal iff no edge has both endpoints unmatched
+            for (u, w) in jedges:
+                if not matched[u] and not matched[w]:
+                    return
+            count += 1
+            return
+        dfs(i + 1)                      # exclude edge i
+        u, w = jedges[i]
+        if not matched[u] and not matched[w]:
+            matched[u] = matched[w] = True
+            dfs(i + 1)
+            matched[u] = matched[w] = False
+
+    dfs(0)
+    return count
+
+
+KNOWN = {2: 1, 3: 3, 4: 14, 5: 444, 6: 52680, 7: 24070032}
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args and args[0] == "brute":
+        hi = int(args[1]) if len(args) > 1 else 6
+        for n in range(2, hi + 1):
+            t0 = time.time()
+            v = a_brute(n)
+            print("brute a(%d) = %d  known=%s  %.2fs"
+                  % (n, v, KNOWN.get(n), time.time() - t0), flush=True)
+        sys.exit(0)
+    lo = int(args[0]) if args else 2
+    hi = int(args[1]) if len(args) > 1 else 8
+    for n in range(lo, hi + 1):
+        t0 = time.time()
+        v = a_formula(n)
+        dt = time.time() - t0
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+        chk = KNOWN.get(n)
+        tag = ("OK" if chk == v else "MISMATCH exp=%d" % chk) if chk is not None else "NEW"
+        print("a(%d) = %d   [%s]  %.2fs  peakRSS=%.0fMB" % (n, v, tag, dt, rss), flush=True)

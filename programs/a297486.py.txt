@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""
+A297486: number of MAXIMAL matchings in the n x n TORUS grid graph C_n [] C_n.
+
+Torus grid: vertices (r,c) with r,c in Z_n. Edges:
+  horizontal (r,c)-(r,(c+1)%n)   [wraps]
+  vertical   (r,c)-((r+1)%n,c)   [wraps]
+Simple graph for n>=3 (OEIS offset 3).
+
+MAXIMAL matching = matching with no edge whose BOTH endpoints are unmatched,
+i.e. the unmatched vertices form an INDEPENDENT set.
+
+METHOD (M25 planar engine WRAPPED on the torus in both dims):
+  Column transfer over big-ints. Per-row boundary state between column c and c+1
+  takes 3 values (2 bits/row, packed):
+     0 = (r,c) matched, no outgoing horizontal edge  -> (r,c+1) free
+     1 = horizontal edge (r,c)-(r,c+1) present        -> (r,c+1) matched by it
+     2 = pending: (r,c) UNMATCHED, no outgoing H      -> (r,c+1) MUST be matched
+  On the TORUS every column has a real right neighbour (col n-1 -> col 0), so the
+  transfer T is UNIFORM (right-edges always allowed; no "last column" special case).
+
+  VERTICAL WRAP (inside a column): rows form a cycle C_n. The column transition
+  fixes (first_ve, first_un):
+     first_ve = vertical edge between row n-1 and row 0 (0/1)
+     first_un = unmatched status of row n-1 (used as prev_un for row 0)
+  Run the linear row-DP 0..n-1 with prev_ve=first_ve, prev_un=first_un; force
+  ve_down at row n-1 to equal first_ve; and require un(row n-1)==first_un. This
+  closes the vertical cycle (wrap vertical edge + wrap vertical-maximality).
+
+  HORIZONTAL WRAP (columns cyclic): the answer is trace(T^n). A closed walk
+  s_0 ->col0-> s_1 -> ... ->col_{n-1}-> s_0 is exactly one valid torus config:
+  col_{n-1}'s outgoing state == col0's incoming state closes the seam, and this
+  equality enforces the seam horizontal-maximality (pending==2 vs matched==0).
+  Multiplicities count the distinct internal (vertical-edge) fillings.
+
+  Valid for n>=3. a(n) = trace(T^n) = sum_s (T^n)_{ss}.
+"""
+import sys, time, resource, array
+
+# ---------------- torus column transition ----------------
+def column_transitions_torus(n, a_packed):
+    """Incoming PACKED state -> {packed_outgoing: multiplicity}, vertical wrap closed."""
+    a = [(a_packed >> (2 * r)) & 3 for r in range(n)]
+    out = {}
+    ob = [0] * n
+
+    def rec(r, prev_ve, prev_un, first_ve, first_un):
+        if r == n:
+            key = 0
+            for i in range(n - 1, -1, -1):
+                key = (key << 2) | ob[i]
+            out[key] = out.get(key, 0) + 1
+            return
+        ar = a[r]
+        last_row = (r == n - 1)
+        ve_choices = (first_ve,) if last_row else (0, 1)
+        for ve_down in ve_choices:
+            if ve_down and prev_ve:          # would share vertex r
+                continue
+            for Rp in (0, 1):
+                if ar == 1:
+                    if prev_ve or ve_down or Rp:
+                        continue
+                    matched = True
+                else:
+                    deg = (1 if prev_ve else 0) + ve_down + Rp
+                    if deg > 1:
+                        continue
+                    matched = (deg == 1)
+                if ar == 2 and not matched:
+                    continue                 # pending vertex must be matched
+                un = not matched
+                if un and ar != 0:
+                    continue                 # unmatched needs left neighbour matched
+                if un and prev_un:
+                    continue                 # vertical maximality (r-1,r)
+                if last_row and (un != first_un):
+                    continue                 # wrap maximality consistency
+                ob[r] = 1 if Rp else (0 if matched else 2)
+                rec(r + 1, ve_down, un, first_ve, first_un)
+
+    for first_ve in (0, 1):
+        for first_un in (0, 1):
+            rec(0, first_ve, bool(first_un), first_ve, bool(first_un))
+    return out
+
+
+# ---------------- build transfer operator (CSR) ----------------
+def build_T(n, verbose=False):
+    """Forward-closure BFS from all-zero state. Returns (order, indptr, indices, data)."""
+    idx = {0: 0}
+    order = [0]
+    indptr = array.array('Q'); indptr.append(0)
+    indices = array.array('I')
+    data = array.array('Q')
+    head = 0
+    while head < len(order):
+        s = order[head]
+        for o, m in column_transitions_torus(n, s).items():
+            j = idx.get(o)
+            if j is None:
+                j = len(order); idx[o] = j; order.append(o)
+            indices.append(j); data.append(m)
+        indptr.append(len(indices))
+        head += 1
+    if verbose:
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+        print(f"   n={n}: states={len(order)} nnz={len(indices)} peakRSS={rss:.0f}MB", flush=True)
+    return order, idx, indptr, indices, data
+
+
+def _rot1(s, n):
+    """Rotate rows by +1: digit at row r -> row (r+1)%n."""
+    new = 0
+    for r in range(n):
+        d = (s >> (2 * r)) & 3
+        if d:
+            new |= d << (2 * ((r + 1) % n))
+    return new
+
+def _refl(s, n):
+    """Reflect rows: digit at row r -> row (n-r)%n."""
+    new = 0
+    for r in range(n):
+        d = (s >> (2 * r)) & 3
+        if d:
+            new |= d << (2 * ((n - r) % n))
+    return new
+
+def _orbits(order, n):
+    """Partition states into dihedral (row rotation+reflection) orbits.
+    Returns list of (rep_index, orbit_size). T commutes with these row
+    automorphisms, so (T^n)_{ss} is constant on each orbit."""
+    idx = {s: i for i, s in enumerate(order)}
+    seen = [False] * len(order)
+    reps = []
+    for i, s in enumerate(order):
+        if seen[i]:
+            continue
+        images = set()
+        cur = s
+        for _ in range(n):
+            images.add(cur)
+            images.add(_refl(cur, n))
+            cur = _rot1(cur, n)
+        for t in images:
+            j = idx.get(t)
+            if j is not None:
+                seen[j] = True
+        reps.append((i, len(images)))
+    return reps
+
+def a_torus_trace(n, verbose=False, use_symmetry=True):
+    """a(n) = trace(T^n). Diagonal of T^n is constant on dihedral row-orbits,
+    so we propagate one representative per orbit and weight by orbit size."""
+    if n < 3:
+        raise ValueError("defined for n>=3")
+    order, idx, indptr, indices, data = build_T(n, verbose=verbose)
+    ns = len(order)
+    if use_symmetry:
+        starts = _orbits(order, n)
+    else:
+        starts = [(i, 1) for i in range(ns)]
+    if verbose:
+        print(f"   n={n}: {len(starts)} orbit-reps (of {ns} states)", flush=True)
+    total = 0
+    done = 0
+    for start, weight in starts:
+        v = [0] * ns
+        v[start] = 1
+        for _ in range(n):
+            nv = [0] * ns
+            for i in range(ns):
+                vi = v[i]
+                if vi:
+                    lo = indptr[i]; hi = indptr[i + 1]
+                    for k in range(lo, hi):
+                        nv[indices[k]] += vi * data[k]
+            v = nv
+        total += weight * v[start]
+        done += 1
+        if verbose and done % 200 == 0:
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+            print(f"   rep {done}/{len(starts)} peakRSS={rss:.0f}MB", flush=True)
+    return total
+
+
+# ---------------- brute force (tiny n) ----------------
+def a_brute(n):
+    N = n * n
+    def vid(r, c): return (r % n) * n + (c % n)
+    edges = []
+    for r in range(n):
+        for c in range(n):
+            edges.append((vid(r, c), vid(r, (c + 1) % n)))   # horizontal
+            edges.append((vid(r, c), vid((r + 1) % n, c)))   # vertical
+    edges = list(set(tuple(sorted(e)) for e in edges))
+    m = len(edges)
+    matched = [False] * N
+    count = 0
+    def dfs(i):
+        nonlocal count
+        if i == m:
+            for u, w in edges:
+                if not matched[u] and not matched[w]:
+                    return
+            count += 1
+            return
+        dfs(i + 1)
+        u, w = edges[i]
+        if not matched[u] and not matched[w]:
+            matched[u] = matched[w] = True
+            dfs(i + 1)
+            matched[u] = matched[w] = False
+    dfs(0)
+    return count
+
+
+KNOWN = {3: 84, 4: 2000, 5: 205920, 6: 39187952, 7: 21856506798,
+         8: 32510786132592, 9: 124523589644006520,
+         # NEW (dual-lineage certified, Claude column-transfer == Codex row-transfer):
+         10: 1281152829402802844888}
+
+if __name__ == "__main__":
+    args = sys.argv[1:]
+    if args and args[0] == "brute":
+        hi = int(args[1]) if len(args) > 1 else 4
+        for n in range(3, hi + 1):
+            print("brute", n, a_brute(n), "known", KNOWN.get(n), flush=True)
+        sys.exit(0)
+    verbose = "-v" in args
+    args = [x for x in args if x != "-v"]
+    lo = int(args[0]) if args else 3
+    hi = int(args[1]) if len(args) > 1 else 9
+    for n in range(lo, hi + 1):
+        t0 = time.time()
+        v = a_torus_trace(n, verbose=verbose)
+        dt = time.time() - t0
+        rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+        chk = KNOWN.get(n)
+        tag = ("OK" if chk == v else ("MISMATCH exp=%d" % chk)) if chk is not None else "NEW"
+        print(f"a({n}) = {v}   [{tag}]  {dt:.2f}s  peakRSS={rss:.0f}MB", flush=True)
