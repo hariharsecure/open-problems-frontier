@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""
+A288957: Number of spanning trees in the n X n king graph.
+Exact Matrix-Tree theorem: delete one row/col from the Laplacian, take the
+determinant via fraction-free Gaussian elimination (Bareiss algorithm) --
+all-integer, no rounding.
+
+King graph on n x n grid: vertex (r,c), r,c in 0..n-1. Edges to all up-to-8
+king-neighbours (orthogonal + diagonal) within bounds.
+"""
+import sys, time, resource
+sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
+from bareiss import bareiss_det
+
+def king_laplacian(n):
+    N = n*n
+    def idx(r,c): return r*n+c
+    deg = [0]*N
+    adj = [[] for _ in range(N)]
+    for r in range(n):
+        for c in range(n):
+            i = idx(r,c)
+            for dr in (-1,0,1):
+                for dc in (-1,0,1):
+                    if dr==0 and dc==0: continue
+                    rr,cc = r+dr, c+dc
+                    if 0<=rr<n and 0<=cc<n:
+                        j = idx(rr,cc)
+                        adj[i].append(j)
+    L = [[0]*(N-1) for _ in range(N-1)]  # delete last vertex (row/col N-1)
+    for i in range(N-1):
+        L[i][i] = len(adj[i])
+        for j in adj[i]:
+            if j < N-1:
+                L[i][j] -= 1
+    return L
+
+def spanning_trees_king(n):
+    L = king_laplacian(n)
+    return bareiss_det(L)
+
+if __name__ == "__main__":
+    known = [1,16,17745,1064918960,3271331573452800,504061943351318476800000,
+              3858339886583692361602445155127296,
+              1459317836184139215695519252141942969301860352,
+              27183718698548427648295525981282802546303364746719379732625,
+              24885268021937835128408553201681360058444589895177297993122070472908013568]
+    for n in range(1, len(known)+1):
+        t0=time.time()
+        v = spanning_trees_king(n)
+        t1=time.time()
+        ok = (v==known[n-1])
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024/1024
+        print(f"n={n} match={ok} time={t1-t0:.2f}s peakRSS={peak:.2f}MB")
+        if not ok:
+            print("  MISMATCH got", v, "expected", known[n-1])
+            sys.exit(1)
+    print("ALL 10 KNOWN TERMS REPRODUCED. Now computing a(11)...")
+    t0=time.time()
+    v11 = spanning_trees_king(11)
+    t1=time.time()
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss/1024/1024
+    print(f"a(11) = {v11}")
+    print(f"time={t1-t0:.2f}s peakRSS={peak:.2f}MB")

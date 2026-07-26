@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""
+A212800: Number of spanning trees of the (n,n)-torus grid graph (= C_n X C_n,
+the Cartesian product of two n-cycles).
+Exact Matrix-Tree theorem: delete one row/col from the Laplacian, take the
+determinant via fraction-free Gaussian elimination (Bareiss algorithm).
+
+Vertex (r,c), r,c in 0..n-1 (n>=3 for simple graph; n=1,2 give a multigraph,
+matches OEIS convention using the same doubled-edge counting as A006235-style
+"regarding case n<3 as multigraph" -- but A212800 starts at n=1 with values
+1,32,... so we replicate its exact edge-multiplicity convention for small n
+by testing against the published terms directly).
+"""
+import sys, time, resource
+sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
+from bareiss import bareiss_det
+
+def torus_laplacian(n):
+    N = n*n
+    def idx(r,c): return r*n+c
+    # neighbor list with multiplicity (handles n=1,2 wrap multi-edges naturally
+    # if we just add both directions even when they coincide -- but that would
+    # double count for n<=2). We'll build via explicit edge list first.
+    edges = {}
+    def add_edge(a,b):
+        if a==b:
+            return  # self-loop shouldn't happen for n>=1 with distinct offset
+        key = (min(a,b),max(a,b))
+        edges[key] = edges.get(key,0)+1
+    for r in range(n):
+        for c in range(n):
+            i = idx(r,c)
+            # horizontal neighbor (r, c+1 mod n)
+            j = idx(r,(c+1)%n)
+            add_edge(i,j)
+            # vertical neighbor (r+1 mod n, c)
+            j = idx((r+1)%n,c)
+            add_edge(i,j)
+    deg = [0]*N
+    adjw = [dict() for _ in range(N)]
+    for (a,b),w in edges.items():
+        deg[a]+=w; deg[b]+=w
+        adjw[a][b]=adjw[a].get(b,0)+w
+        adjw[b][a]=adjw[b].get(a,0)+w
+    L = [[0]*(N-1) for _ in range(N-1)]
+    for i in range(N-1):
+        L[i][i]=deg[i]
+        for j,w in adjw[i].items():
+            if j<N-1:
+                L[i][j]-=w
+    return L
+
+def spanning_trees_torus(n):
+    L = torus_laplacian(n)
+    return bareiss_det(L)
+
+if __name__=="__main__":
+    known=[1,32,11664,42467328,1562500000000,587312954081280000,
+           2266101334892340404752384,89927963805390785392395474173952,
+           36735015407753190053984060991247792275456,
+           154528563849617762057150663767149772800000000000000]
+    for n in range(1,len(known)+1):
+        t0=time.time()
+        v=spanning_trees_torus(n)
+        dt=time.time()-t0
+        ok = (v==known[n-1])
+        print(f"n={n} match={ok} time={dt:.3f}s")
+        if not ok:
+            print("  got", v, "expected", known[n-1])

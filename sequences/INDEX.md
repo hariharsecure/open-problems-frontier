@@ -6,11 +6,13 @@ _REGENERATED from packages (race-free). want = more (editor-requested) vs nonn (
 |---|---|---|---|
 | A071104 | Number of perfect matchings (dimer coverings) of a v | 2 | more |
 | A143659 | Number of perfect matchings (domino tilings) of the  | 3 | more |
+| A212800 | Number of spanning trees of the (n,n)-torus grid gra | 10 | nonn |
 | A270668 | Triangle read by rows: number of domino tilings of t | 19 | nonn |
 | A286017 | Number of matchings in the n-Hanoi graph | 2 | nonn |
 | A287595 | Number of maximal matchings in the n X n grid graph | 1 | more |
 | A288027 | Number of minimal edge covers in the n X n grid grap | 2 | more |
 | A288490 | Number of independent vertex sets and vertex covers  | 2 | nonn |
+| A288957 | Number of spanning trees in the n X n king graph | 10 | nonn |
 | A291920 | Number of dominating sets in the Fibonacci cube Γ_n | 1 | more |
 | A292669 | Number of matchings in the n-Sierpinski tetrahedron  | 1 | nonn |
 | A297230 | Number of edge covers in the n-Sierpinski tetrahedro | 1 | nonn |
@@ -33,4 +35,4 @@ _REGENERATED from packages (race-free). want = more (editor-requested) vs nonn (
 | A374718 | Number of maximal matchings in the n-Sierpinski gask | 2 | more |
 | A378860 | Number of minimal edge covers of the n-Sierpinski ga | 2 | more |
 
-**73 certified terms / 28 sequences** — 42 terms across 19 keyword:more sequences (priority); 31 across 9 keyword:nonn.
+**93 certified terms / 30 sequences** — 42 across 19 keyword:more (priority); 51 across 11 nonn.
