@@ -52,6 +52,10 @@ throughout — no floating point in any count. A term that only one engine produ
 - [`findings/`](findings/) — the honest negative results and frontier triage (why certain famous lanes
   are capped), including the Collatz β→γ tautology analysis.
 
+## Methods & findings write-up
+
+See [NOTES.md](NOTES.md) — the reproducible methods and the honest negative results in depth.
+
 ## License
 
 Code under MIT; data/text under CC BY 4.0. See [LICENSE](LICENSE).
