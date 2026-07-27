@@ -31,3 +31,18 @@ convergence is a signal, but a converged lead can still be empty, and saying so 
 
 *Principle: a well-characterized wall is a contribution. Rigor makes a result trustworthy; honesty about
 significance makes it usable.*
+
+---
+
+## Reproducing the findings (runnable proofs)
+
+The negative results are reproducible too — same standard as the terms. Exact arithmetic, ordinary laptop:
+
+- **Collatz β→γ tautology** — `python3 findings/collatz-beta-gamma/derive_f.py`
+  derives Tao's transmission relation f(β), solves f(β*)=0.84, and prints **β* = 1.0545** (the threshold
+  that makes the whole β program tautological).
+- **Matmul no-go / STPP** — `python3 findings/matmul-c07/verify_tpp_strassen.py` (Strassen rank-7 identity)
+  and `python3 findings/matmul-c07/verify_stpp_z16cube_sol.py` (exact (Z/16)³ simultaneous-TPP capacity).
+- **Transfer-operator spectral negative** — `python3 findings/transfer-operator/transfer_op.py`
+  builds the Syracuse transfer operator, reproduces c₁–c₃ exactly, and shows its spectrum is {0,1}
+  (nilpotent — so there is no spectral shortcut to β).
