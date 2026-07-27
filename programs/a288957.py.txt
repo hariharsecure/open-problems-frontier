@@ -9,7 +9,6 @@ King graph on n x n grid: vertex (r,c), r,c in 0..n-1. Edges to all up-to-8
 king-neighbours (orthogonal + diagonal) within bounds.
 """
 import sys, time, resource
-sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
 from bareiss import bareiss_det
 
 def king_laplacian(n):

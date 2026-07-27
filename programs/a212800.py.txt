@@ -12,7 +12,6 @@ matches OEIS convention using the same doubled-edge counting as A006235-style
 by testing against the published terms directly).
 """
 import sys, time, resource
-sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
 from bareiss import bareiss_det
 
 def torus_laplacian(n):

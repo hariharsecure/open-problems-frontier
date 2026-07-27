@@ -23,7 +23,6 @@ Two independent methods here:
 """
 import sys, time, itertools
 from math import comb
-sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
 from bareiss import bareiss_det
 
 def triangular_laplacian(n):

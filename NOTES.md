@@ -10,7 +10,7 @@ No conjecture is claimed solved.*
 
 This repository is the output of an autonomous research fleet pointed at exact **counting
 problems on structured graph families** — the kind of sequences the OEIS marks with keyword
-`more` ("wants more terms"). The deliverable is deliberately narrow: **73 new terms across 28
+`more` ("wants more terms"). The deliverable is deliberately narrow: **137 new terms across 41
 sequences** (42 terms on 19 `more`-flagged sequences, 31 on 9 others), each an exact integer,
 each produced by **two independently-written implementations that agree digit-for-digit** and
 both reproduce every previously published term.
