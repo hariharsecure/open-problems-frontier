@@ -8,6 +8,7 @@ _REGENERATED from packages._
 | A143659 | Number of perfect matchings (domino tilings) of the  | 3 | more |
 | A193134 | Numbers of spanning trees of the folded cube graphs | 3 | nonn |
 | A193135 | Numbers of spanning trees of the halved cube graphs | 3 | nonn |
+| A193154 | Numbers of spanning trees of the triangular graphs | 6 | nonn |
 | A212800 | Number of spanning trees of the (n,n)-torus grid gra | 10 | nonn |
 | A270668 | Triangle read by rows: number of domino tilings of t | 19 | nonn |
 | A286017 | Number of matchings in the n-Hanoi graph | 2 | nonn |
@@ -43,4 +44,4 @@ _REGENERATED from packages._
 | A378860 | Number of minimal edge covers of the n-Sierpinski ga | 2 | more |
 | A387566 | Number of matchings in the n-Lucas cube graph | 2 | more |
 
-**107 certified terms / 38 sequences** — 48 across 24 keyword:more; 59 across 14 nonn.
+**113 certified terms / 39 sequences** — 48 across 24 keyword:more; 65 across 15 nonn.
