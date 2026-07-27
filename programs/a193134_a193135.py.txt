@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""
+A193134 — spanning trees of the FOLDED n-cube graph (merge antipodal vertices
+of the n-hypercube Q_n; 2^(n-1) vertices, degree n for n>=3).
+A193135 — spanning trees of the HALVED n-cube graph (vertices = even-weight
+length-n binary vectors, 2^(n-1) of them; edges between vectors at Hamming
+distance 2).
+
+Both are exact Matrix-Tree / Bareiss targets, built directly from the
+explicit combinatorial definition (bit-vector graphs) -- no shortcuts.
+"""
+import sys, time, itertools
+sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
+from bareiss import bareiss_det
+
+def folded_cube_laplacian(n):
+    # vertices of Q_n: 0..2^n-1. Antipodal class: v and v ^ ((1<<n)-1).
+    full = (1<<n) - 1
+    seen = {}
+    classes = []
+    for v in range(1<<n):
+        if v in seen: continue
+        w = v ^ full
+        cid = len(classes)
+        seen[v] = cid
+        seen[w] = cid
+        classes.append((v,w))
+    N = len(classes)  # 2^(n-1)
+    edgeset = set()
+    for v in range(1<<n):
+        cv = seen[v]
+        for b in range(n):
+            u = v ^ (1<<b)
+            cu = seen[u]
+            if cu != cv:
+                edgeset.add((min(cv,cu), max(cv,cu)))
+    deg = [0]*N
+    adj = [[] for _ in range(N)]
+    for a,b in edgeset:
+        deg[a]+=1; deg[b]+=1
+        adj[a].append(b); adj[b].append(a)
+    L = [[0]*(N-1) for _ in range(N-1)]
+    for i in range(N-1):
+        L[i][i]=deg[i]
+        for j in adj[i]:
+            if j<N-1: L[i][j]-=1
+    return L, N, deg[0] if N>0 else 0
+
+def folded_cube_spanning_trees(n):
+    if n==0: return 1
+    L,N,d = folded_cube_laplacian(n)
+    return bareiss_det(L)
+
+def halved_cube_laplacian(n):
+    # vertices: even-weight bitstrings length n. Edge if Hamming distance ==2.
+    verts = [v for v in range(1<<n) if bin(v).count('1')%2==0]
+    idx = {v:i for i,v in enumerate(verts)}
+    N = len(verts)
+    adj = [[] for _ in range(N)]
+    deg = [0]*N
+    for i,v in enumerate(verts):
+        for b1 in range(n):
+            for b2 in range(b1+1,n):
+                u = v ^ (1<<b1) ^ (1<<b2)
+                j = idx[u]
+                if j>i:
+                    adj[i].append(j); adj[j].append(i)
+    for i in range(N):
+        deg[i] = len(adj[i])
+    L = [[0]*(N-1) for _ in range(N-1)]
+    for i in range(N-1):
+        L[i][i]=deg[i]
+        for j in adj[i]:
+            if j<N-1: L[i][j]-=1
+    return L, N
+
+def halved_cube_spanning_trees(n):
+    if n<=1: return 1
+    L,N = halved_cube_laplacian(n)
+    return bareiss_det(L)
+
+if __name__=="__main__":
+    print("=== A193134 folded cube gate ===")
+    folded_known = {2:1,3:16,4:4096,5:2147483648,6:14167099448608935641088,
+                     7:99884502526333896315983085285953467624610139734016}
+    for n,want in folded_known.items():
+        t0=time.time(); got=folded_cube_spanning_trees(n); dt=time.time()-t0
+        print(f"n={n} got_match={got==want} time={dt:.3f}s")
+        if got!=want:
+            print("  MISMATCH got=",got)
+
+    print("=== A193135 halved cube gate ===")
+    halved_known = {1:1,2:1,3:16,4:82944,5:126806761930752,
+                     6:128639638970899317558746284032000000,
+                     7:2382934566897117854359749541365491697135987197889852217491456000000000000000000000}
+    for n,want in halved_known.items():
+        t0=time.time(); got=halved_cube_spanning_trees(n); dt=time.time()-t0
+        print(f"n={n} got_match={got==want} time={dt:.3f}s")
+        if got!=want:
+            print("  MISMATCH got=",got)

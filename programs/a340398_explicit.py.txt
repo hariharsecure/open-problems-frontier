@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""
+A340398 — INDEPENDENT lineage: explicit Bruhat/transposition Cayley graph of
+S_n (n! vertices, each pair of permutations connected iff they differ by
+swapping two entries of the permutation array = pi*sigma^-1 is a
+transposition), Laplacian built directly from the explicit adjacency, exact
+Matrix-Tree cofactor via fraction-free Gaussian elimination (Bareiss) --
+completely independent of the representation-theory closed form in
+bruhat_formula.py (different object built, different algorithm).
+"""
+import sys, time, itertools
+sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
+from bareiss import bareiss_det
+
+def bruhat_laplacian(n):
+    perms = list(itertools.permutations(range(n)))
+    N = len(perms)
+    index = {p:i for i,p in enumerate(perms)}
+    adj = [[] for _ in range(N)]
+    for i,p in enumerate(perms):
+        for a in range(n):
+            for b in range(a+1,n):
+                q = list(p)
+                q[a],q[b] = q[b],q[a]
+                j = index[tuple(q)]
+                if j>i:
+                    adj[i].append(j)
+                    adj[j].append(i)
+    L = [[0]*(N-1) for _ in range(N-1)]
+    for i in range(N-1):
+        L[i][i] = len(adj[i])
+        for j in adj[i]:
+            if j<N-1:
+                L[i][j] -= 1
+    return L
+
+def bruhat_spanning_trees_explicit(n):
+    if n==1: return 1
+    return bareiss_det(bruhat_laplacian(n))
+
+if __name__=="__main__":
+    known = {1:1,2:1,3:81,4:22799473113563136}
+    for n,want in known.items():
+        t0=time.time()
+        got = bruhat_spanning_trees_explicit(n)
+        dt=time.time()-t0
+        print(f"n={n} got={got} want={want} match={got==want} time={dt:.3f}s")
+        assert got==want
+    print("gate passed. Computing n=5 (S_5, 120 vertices)...")
+    t0=time.time()
+    v5 = bruhat_spanning_trees_explicit(5)
+    dt=time.time()-t0
+    print(f"a(5) [explicit] = {v5}  time={dt:.2f}s")

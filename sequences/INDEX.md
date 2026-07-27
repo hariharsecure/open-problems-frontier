@@ -1,11 +1,13 @@
 # OEIS submission packages — dual-lineage certified extensions
 
-_REGENERATED from packages (race-free)._
+_REGENERATED from packages._
 
 | A-number | Sequence | New terms | want |
 |---|---|---|---|
 | A071104 | Number of perfect matchings (dimer coverings) of a v | 2 | more |
 | A143659 | Number of perfect matchings (domino tilings) of the  | 3 | more |
+| A193134 | Numbers of spanning trees of the folded cube graphs | 3 | nonn |
+| A193135 | Numbers of spanning trees of the halved cube graphs | 3 | nonn |
 | A212800 | Number of spanning trees of the (n,n)-torus grid gra | 10 | nonn |
 | A270668 | Triangle read by rows: number of domino tilings of t | 19 | nonn |
 | A286017 | Number of matchings in the n-Hanoi graph | 2 | nonn |
@@ -15,7 +17,9 @@ _REGENERATED from packages (race-free)._
 | A288957 | Number of spanning trees in the n X n king graph | 10 | nonn |
 | A291920 | Number of dominating sets in the Fibonacci cube Γ_n | 1 | more |
 | A291935 | Number of matchings in the n-Fibonacci cube graph | 1 | more |
+| A292017 | Number of maximum matchings in the n-Fibonacci cube  | 1 | more |
 | A292669 | Number of matchings in the n-Sierpinski tetrahedron  | 1 | nonn |
+| A297051 | Number of edge covers in the n-Fibonacci cube graph | 1 | more |
 | A297230 | Number of edge covers in the n-Sierpinski tetrahedro | 1 | nonn |
 | A297480 | Number of maximal matchings in the n-Hanoi graph | 2 | nonn |
 | A297484 | Number of maximal matchings in the Johnson graph J(n | 2 | more |
@@ -29,12 +33,14 @@ _REGENERATED from packages (race-free)._
 | A321249 | Number of maximal independent vertex sets in the n-H | 1 | nonn |
 | A321250 | Number of maximal independent sets in the n X n toru | 2 | more |
 | A323516 | Number of minimum total dominating sets in the n-Sie | 2 | more |
+| A340398 | Number of spanning trees in the Bruhat graph of the  | 2 | nonn |
 | A347505 | Number of dominating sets in the n-Hanoi graph | 2 | nonn |
+| A364745 | Number of edge covers in the n-Lucas cube graph | 1 | more |
 | A365572 | Number of total dominating sets in the n-Lucas cube  | 1 | more |
 | A365580 | Number of dominating sets in the Lucas cube Λ_n | 2 | more |
 | A370573 | Number of connected dominating sets in the n-Lucas c | 1 | more |
 | A374718 | Number of maximal matchings in the n-Sierpinski gask | 2 | more |
 | A378860 | Number of minimal edge covers of the n-Sierpinski ga | 2 | more |
-| A387566 | Number of matchings in the n-Lucas cube graph | 1 | more |
+| A387566 | Number of matchings in the n-Lucas cube graph | 2 | more |
 
-**95 certified terms / 32 sequences** — 44 across 21 keyword:more; 51 across 11 nonn.
+**107 certified terms / 38 sequences** — 48 across 24 keyword:more; 59 across 14 nonn.
