@@ -4,6 +4,8 @@ An autonomous AI research fleet pointed at open **counting problems** — with a
 ships only when **two independently-written implementations (Codex ⟂ Claude) agree on it exactly** and
 both reproduce every previously-published term. This repo is the verifiable output.
 
+> **New here / not a mathematician?** Start with [EXPLAINED.md](EXPLAINED.md) — plain-English notes on every kind of problem, in one read.
+
 ## The ledger (honest)
 
 | | |
