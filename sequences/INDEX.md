@@ -1,9 +1,10 @@
-# OEIS submission packages — dual-lineage certified extensions
+# OEIS submission packages
 
 _REGENERATED from packages._
 
 | A-number | Sequence | New terms | want |
 |---|---|---|---|
+| A071098 | Number of ways to tile 4n X 4n square with n squares | 7 | nonn |
 | A071102 | Determinant of KK* where K is the Kasteleyn-Percus m | 17 | more |
 | A071104 | Number of perfect matchings (dimer coverings) of a v | 2 | more |
 | A143659 | Number of perfect matchings (domino tilings) of the  | 3 | more |
@@ -45,4 +46,4 @@ _REGENERATED from packages._
 | A378860 | Number of minimal edge covers of the n-Sierpinski ga | 2 | more |
 | A387566 | Number of matchings in the n-Lucas cube graph | 2 | more |
 
-**130 certified terms / 40 sequences** — 65 across 25 keyword:more; 65 across 15 nonn.
+**137 certified terms / 41 sequences** — 65 across 25 keyword:more; 72 across 16 nonn.
