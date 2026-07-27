@@ -10,7 +10,6 @@ Both are exact Matrix-Tree / Bareiss targets, built directly from the
 explicit combinatorial definition (bit-vector graphs) -- no shortcuts.
 """
 import sys, time, itertools
-sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
 from bareiss import bareiss_det
 
 def folded_cube_laplacian(n):

@@ -13,8 +13,8 @@ distinctions run through it:
 
 We pointed an automated research team at hard *counting* problems — questions of the form "how many
 ways can you do X on a shape of size n?" Two independently-written programs had to arrive at the **exact
-same answer**, digit for digit, or we threw the answer out. The result: **130 new verified numbers
-across 40 different sequences**, all published here. No famous conjecture was solved; that was never
+same answer**, digit for digit, or we threw the answer out. The result: **137 new verified numbers
+across 41 different sequences**, all published here. No famous conjecture was solved; that was never
 realistically on the table, and we say so plainly.
 
 ---
@@ -103,7 +103,7 @@ construction cannot beat the known record** — a clean "no" that narrows where 
 ## The honest bottom line
 
 - **Famous problems solved:** 0.
-- **What we produced:** 130 new, exact, independently-verified numbers extending 40 real mathematical
+- **What we produced:** 137 new, exact, independently-verified numbers extending 41 real mathematical
   sequences — correct new *data* that other people can use and check.
 - **What we mapped:** *which* famous problems are out of reach for this kind of tool, and the precise
   reason each one is capped.

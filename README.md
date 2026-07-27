@@ -1,63 +1,97 @@
 # Open Problems Frontier
 
-An autonomous AI research fleet pointed at open **counting problems** — with a hard rule: a result
-ships only when **two independently-written implementations (Codex ⟂ Claude) agree on it exactly** and
-both reproduce every previously-published term. This repo is the verifiable output.
+**Exact new terms for open combinatorial counting sequences — every number confirmed by two independently written programs that agree digit-for-digit, or it doesn't ship.**
 
-> **New here / not a mathematician?** Start with [EXPLAINED.md](EXPLAINED.md) — plain-English notes on every kind of problem, in one read.
+> **New here? Not a mathematician?** Start with **[EXPLAINED.md](EXPLAINED.md)** — plain-English notes on every kind of problem here, in one read.
+
+An autonomous research fleet pointed at open **counting problems** ("how many ways can you do X on a shape of size *n*?") on structured graph families. The hard rule: a result is published only when **two independently authored engines — different algorithms, no shared code — produce the exact same integer** and both reproduce every previously published term of the sequence. This repository is the verifiable output.
+
+---
 
 ## The ledger (honest)
 
-| | |
+| Count | What it is |
 |---:|:---|
-| **73** | new terms, **dual-verified** |
-| **28** | integer sequences extended (**19** flagged by the OEIS as wanting more terms) |
+| **137** | new terms, **computed and dual-verified** (exact integers) |
+| **41** | OEIS sequences extended — **25** carry the OEIS `more` flag ("wants more terms"), 16 are `nonn` |
 | **0** | famous conjectures solved |
 
-That last row is not a failure to hide — it's the point. When the fleet analyzed a popular target (an
-upper bound on the Collatz/Syracuse constant β), it **proved the improvement was mathematically
-tautological** (you'd need β ≤ 1.055, ≈ the conjecture itself) and **retired the effort** rather than
-grinding on it. See [`findings/`](findings/).
+That last row is not a failure we're hiding — it's the honest scope. This work produces **correct new data**, not new theory, and it solves no famous open problem. When the fleet hit a wall on a popular target (a Collatz-adjacent bound), it **proved the route was capped** and retired the effort rather than dressing up a dead end. See [`findings/`](findings/).
 
-## What this is
+Three distinctions run through everything here, and we keep them separate:
 
-- **New, correct data.** Exact new terms for well-defined combinatorial counting sequences — maximal
-  matchings, dominating sets, minimal edge covers, dimer/domino tilings — on structured graph families:
-  grids, tori, king/knight graphs, the Sierpinski gasket & tetrahedron, Fibonacci/Lucas cubes, and the
-  Tower-of-Hanoi graph. Each is a candidate b-file extension of an existing OEIS sequence.
-- **Reproducible.** Every term ships with a self-contained program ([`programs/`](programs/)) that
-  reproduces the full published prefix and computes the new term(s).
-- **Honest about its limits.** It is incremental *data*, not new *theory*, and it solves no famous
-  problem. The [`findings/`](findings/) document the dead ends it characterized and retired.
+- **Computed & verified** — the 137 exact new terms, double-checked two independent ways. (Most of this work.)
+- **Proved / shown** — a handful of logical results in [`findings/`](findings/) (e.g. why a lane is capped).
+- **Solved a famous problem** — **none.** Never claimed.
+
+---
+
+## Quick start (30 seconds)
+
+Every sequence ships with a self-contained program (stdlib Python, exact big-integer arithmetic, no dependencies) that reproduces the full published prefix and then computes the new term(s).
+
+```bash
+git clone https://github.com/hariharsecure/open-problems-frontier.git
+cd open-problems-frontier
+
+# Pick any program in programs/ and run it:
+python3 programs/a374718.py.txt
+```
+
+You'll see each term printed with an `[OK]` as the program reproduces the known prefix and then the new terms:
+
+```
+a(1) = 3   [OK]
+a(2) = 11   [OK]
+...
+a(8) = 39500622898119972708775991791836711708086527977446...   [OK]
+total 0.018s  peakRSS=10MB
+```
+
+The `[OK]` lines through `a(8)` are the program re-deriving the sequence's already-published terms from scratch — the correctness check. Terms beyond the last published one are the new, dual-verified contributions. Run any other file in [`programs/`](programs/) the same way.
+
+---
+
+## Repository structure
+
+| Path | What's in it |
+|:---|:---|
+| [`sequences/`](sequences/) | One package per sequence: the exact new b-file lines, the method, and the program reference. Start at [`sequences/INDEX.md`](sequences/INDEX.md) for the full list and current counts. |
+| [`programs/`](programs/) | Self-contained, runnable programs (stdlib Python, exact arithmetic) — one per sequence. Each reproduces the published prefix, then the new terms. |
+| [`findings/`](findings/) | The honest negative results and frontier triage — why certain famous lanes are capped, with the threshold computed. Includes the Collatz β→γ tautology analysis and the parity-barrier triage. |
+| [`NOTES.md`](NOTES.md) | The reproducible methods and the negative results in technical depth. |
+| [`EXPLAINED.md`](EXPLAINED.md) | Plain-English walkthrough of every problem type — no math background needed. |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to add or check a sequence. |
+
+The families covered: square / torus / king grids, triangular grids, the Sierpinski gasket and tetrahedron, Tower-of-Hanoi graphs, Apollonian networks, Johnson graphs, and Fibonacci / Lucas cubes. The counts: matchings (all / maximal / maximum), dominating sets (plain / total / connected / minimum-total), independent sets, edge covers, spanning trees, and domino / dimer tilings.
+
+---
+
+## How verification works
+
+Every published term clears a fixed gate:
+
+1. **Two independently authored engines** — written from the problem definition by different models, without reading each other's code, and preferably using structurally different algorithms — must agree on the new term **digit-for-digit**.
+2. **Both must reproduce the sequence's full published prefix** exactly, pinning both engines to the original author's definition.
+3. Where feasible, a **third independent check** (brute-force enumeration on small cases) anchors the *semantics* — confirming both engines count the object the definition actually names.
+
+Exact integer / rational arithmetic throughout — **no floating point touches any count**. A term that only one engine produced is **not** included: several such terms were withheld until a second engine could confirm them, and one was deferred with a characterized obstruction rather than shipped. Dual-lineage agreement is strong evidence, not a formal proof of program correctness; each package states exactly what its certification rests on.
+
+---
 
 ## What this is **not**
 
-- Not a solution to Collatz, Riemann, or any famous open problem (it solved none).
-- Not a claim of new mathematical *theory* — these are correct new *data points*.
-- Not (yet) accepted into the OEIS. These are independently-verified **candidate** extensions; OEIS
-  submission is a separate, human-authored, editor-reviewed process. Credit to the OEIS and to the
-  original sequence authors — this work extends theirs.
+- **Not a solution to Collatz, Riemann, Goldbach, or any famous open problem.** It solved none, and does not advance any of them. The Collatz-adjacent work *bounds a constant of Tao's* and then proves the numerical route onward is capped — that is a triage result, not conjecture progress.
+- **Not new mathematical theory.** These are correct new *data points* — exact terms of well-defined sequences — plus a few small structural facts in the findings.
+- **Not accepted into the OEIS.** Every term here is an independently dual-verified **candidate** b-file extension. OEIS submission is a separate, human-authored, editor-reviewed process, and nothing in this repository has been through it.
 
-## How the verification works
+---
 
-Two independently-authored engines, different algorithms, must produce the **exact same integer** and
-both must reproduce the sequence's full published prefix; several terms are additionally checked against
-brute-force enumeration on small cases and a third independent method. Exact integer/rational arithmetic
-throughout — no floating point in any count. A term that only one engine produced is **not** included.
+## Credit & license
 
-## Structure
+This work **extends** sequences authored by others and catalogued by the [On-Line Encyclopedia of Integer Sequences (OEIS)](https://oeis.org). Full credit to the OEIS and to the original sequence authors — the candidate extensions here build on theirs.
 
-- [`sequences/`](sequences/) — one package per sequence: the exact new b-file lines, the method, and the
-  program reference. [`sequences/INDEX.md`](sequences/INDEX.md) lists all 28 (marked `more` = OEIS-flagged
-  vs `nonn` = soft-want).
-- [`programs/`](programs/) — self-contained, runnable programs (stdlib Python), one per sequence.
-- [`findings/`](findings/) — the honest negative results and frontier triage (why certain famous lanes
-  are capped), including the Collatz β→γ tautology analysis.
+- **Code:** MIT License
+- **Data & text:** CC BY 4.0
 
-## Methods & findings write-up
-
-See [NOTES.md](NOTES.md) — the reproducible methods and the honest negative results in depth.
-
-## License
-
-Code under MIT; data/text under CC BY 4.0. See [LICENSE](LICENSE).
+See [LICENSE](LICENSE). Copyright © 2026 Harihar Thapa.

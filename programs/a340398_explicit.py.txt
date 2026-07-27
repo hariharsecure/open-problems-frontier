@@ -9,7 +9,6 @@ completely independent of the representation-theory closed form in
 bruhat_formula.py (different object built, different algorithm).
 """
 import sys, time, itertools
-sys.path.insert(0, "/Users/june/.sanshar/problems/research/SCOUT_G")
 from bareiss import bareiss_det
 
 def bruhat_laplacian(n):
